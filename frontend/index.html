@@ -11,7 +11,35 @@
     <h1>FS Risk Mapping</h1>
     <span id="status">Loading map…</span>
   </header>
-  <div id="map"></div>
+  <main>
+    <div id="map"></div>
+    <aside id="panel">
+      <section>
+        <p class="hint">Click a home on the map to map its parcel, Home Ignition Zones and trees.</p>
+      </section>
+      <section id="layers">
+        <h2>Layers</h2>
+        <label><input type="checkbox" data-layer="ortho" checked> BC orthophoto (2019, 15 cm)</label>
+        <label><input type="checkbox" data-layer="parcel" checked> Parcel</label>
+        <label><input type="checkbox" data-layer="zones" checked> Ignition zones</label>
+        <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
+        <label><input type="checkbox" data-layer="trees" checked> Trees (LiDAR)</label>
+        <label class="sub">Colour trees by
+          <select id="treeColour">
+            <option value="height">height</option>
+            <option value="zone">zone</option>
+          </select>
+        </label>
+        <div id="legend"></div>
+      </section>
+      <section id="summary" hidden></section>
+      <footer class="attr">
+        Analysis data: LidarBC and ParcelMap BC (Open Government Licence – British Columbia),
+        building footprints © Microsoft (ODbL). Based on FireSmart BC guidance; not an official
+        FireSmart assessment. Basemap imagery is for display only.
+      </footer>
+    </aside>
+  </main>
   <script src="app.js"></script>
 </body>
 </html>
