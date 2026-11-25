@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compare Findings</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="compare.css">
+</head>
+<body class="compare">
+  <header>
+    <h1>FS Risk Mapping · Compare</h1>
+    <label class="hdr-field">Property <select id="prop"></select></label>
+    <a id="mapLink" class="hdr-link" href="index.html">← Map</a>
+    <span id="status"></span>
+  </header>
+  <div class="cmp-body">
+    <section id="cards" class="cards"></section>
+    <p class="hint cmp-hint">Same orthophoto crops, LiDAR facts and checklist go to both models. Mark each answer
+      correct or wrong; marks are saved locally in <code>data/labels.sqlite</code> and become a test set.
+      Orange text means the Python LiDAR re-check disagrees with the model.</p>
+    <section id="zones"></section>
+    <footer class="attr">Based on FireSmart BC guidance; not an official FireSmart assessment.
+      Imagery: LidarBC 2019 orthophoto (Open Government Licence – British Columbia).</footer>
+  </div>
+  <script src="compare.js"></script>
+</body>
+</html>

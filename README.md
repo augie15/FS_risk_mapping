@@ -38,10 +38,30 @@ Tests (offline, synthetic data): `.venv/bin/pip install pytest && .venv/bin/pyth
 Data sources, licences and coverage: [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
 Google Maps imagery is display only; all analysis uses open BC data.
 
+## AI findings per zone (step 2)
+
+Each ignition zone's orthophoto crop, its LiDAR facts and a fixed checklist
+([config/firesmart_checklist.json](config/firesmart_checklist.json), sources in
+[docs/FIRESMART_CHECKLIST.md](docs/FIRESMART_CHECKLIST.md)) go to a vision model, either local
+(Ollama, `qwen3-vl:8b-instruct`) or the Claude API. Every answer is re-checked in Python against
+the schema and the LiDAR measurements. Pins show on the map; `/compare.html` puts both models side
+by side and lets you mark answers correct or wrong (saved to `data/labels.sqlite`).
+Details, spend cap and settings: [docs/AI_FINDINGS.md](docs/AI_FINDINGS.md).
+
+Add these to your `.env` (and blank to `.env.example`) to use Claude:
+
+```
+ANTHROPIC_API_KEY=
+FS_AI_RUN_CAP_USD=0.50
+```
+
 ## API
 
 - `POST /api/assess` `{lat, lng}` starts a run; `GET /api/assess/{id}` polls status and summary
 - `GET /api/property/{id}/{parcel|buildings|zones|trees}.geojson`, `GET /api/property/{id}/ortho.png`
+- `GET /api/ai/status`; `POST /api/ai/run` `{id, backend}`; `GET /api/ai/job/{id}/{backend}`;
+  `GET /api/ai/{id}/{backend}`; `GET /api/property/{id}/crop/{zone}.png`
+- `GET /api/marks/{id}`, `POST /api/marks` (correct / wrong per finding)
 
 ## Known limits
 
@@ -58,6 +78,8 @@ Google Maps imagery is display only; all analysis uses open BC data.
 
 - `backend/` FastAPI app and job endpoints; serves the frontend
 - `pipeline/` data fetchers (`sources.py`), LiDAR processing (`lidar.py`), one-property run (`property.py`)
+- `pipeline/ai/` zone crops and facts, prompt and schema, backends, validator, marks
+- `config/` the versioned FireSmart checklist
 - `frontend/` plain HTML/JS, no build step; Google Maps if a key is set, otherwise Leaflet
 - `data/raw`, `data/processed` downloads and outputs (git-ignored)
 

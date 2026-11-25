@@ -1,0 +1,41 @@
+body.compare { display: block; height: auto; background: #f4f5f2; color: #1d2320; }
+body.compare header { position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+.hdr-field { font-size: .85rem; display: flex; gap: .4rem; align-items: center; }
+.hdr-link { color: #cfe; font-size: .85rem; }
+.cmp-body { max-width: 1280px; margin: 0 auto; padding: 1rem; }
+.cmp-hint { margin: .2rem 0 1rem; font-size: .85rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .75rem; }
+.card { background: #fff; border: 1px solid #dde1da; border-radius: 6px; padding: .75rem 1rem; }
+.card h2 { font-size: 1.1rem; margin: 0 0 .5rem; }
+.card table, .zone table { border-collapse: collapse; width: 100%; }
+.card td { padding: .15rem 0; font-size: .88rem; }
+.card td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.card .big { font-size: 1.6rem; font-weight: 650; }
+.zone { background: #fff; border: 1px solid #dde1da; border-radius: 6px; margin: 1rem 0; padding: .75rem 1rem; }
+.zone h2 { font-size: 1.15rem; margin: 0 0 .5rem; display: flex; align-items: center; gap: .5rem; }
+.zone-grid { display: grid; grid-template-columns: 280px 1fr; gap: 1rem; align-items: start; }
+.zone-grid img { width: 100%; border-radius: 4px; display: block; }
+.facts { font-size: .78rem; color: #4a524d; margin-top: .4rem; line-height: 1.4; }
+.zone th { text-align: left; font-size: .8rem; color: #5a625d; font-weight: 600; padding: .3rem .4rem; border-bottom: 2px solid #e3e6e1; }
+.zone td { vertical-align: top; padding: .45rem .4rem; border-bottom: 1px solid #eceee9; font-size: .86rem; }
+.zone td.q { width: 24%; color: #2c332f; }
+.zone td.ans { width: 33%; }
+.zone td.agree { width: 7%; text-align: center; font-size: 1.1rem; }
+.chip { display: inline-block; padding: .05rem .45rem; border-radius: 999px; font-size: .75rem; font-weight: 650; color: #fff; }
+.chip.ok { background: #1a9641; } .chip.concern { background: #d7191c; } .chip.cant_tell { background: #8a8a8a; }
+.conf { color: #5a625d; font-size: .78rem; margin-left: .25rem; }
+.reason { margin: .2rem 0; }
+.lidar { font-size: .78rem; color: #4a524d; }
+.lidar.disagree { color: #b35c00; font-weight: 650; }
+.marks { margin-top: .3rem; display: flex; gap: .3rem; }
+.marks button { font-size: .78rem; padding: .1rem .5rem; border: 1px solid #c9cec6; background: #fff; border-radius: 4px; cursor: pointer; }
+.marks button.on.correct { background: #1a9641; color: #fff; border-color: #1a9641; }
+.marks button.on.wrong { background: #d7191c; color: #fff; border-color: #d7191c; }
+.none { color: #8a8a8a; font-style: italic; }
+.problems { font-size: .78rem; color: #8a5a00; margin: .3rem 0 0; }
+@media (max-width: 800px) {
+  .zone-grid { grid-template-columns: 1fr; }
+  .zone table, .zone tbody, .zone tr, .zone td { display: block; width: auto !important; }
+  .zone thead { display: none; }
+  .zone td.agree { text-align: left; }
+}

@@ -13,6 +13,10 @@ const HEIGHT_BINS = [ // [min height m, colour, label]
   [25, "#bd0026", "25 m +"], [15, "#f03b20", "15–25 m"], [8, "#fd8d3c", "8–15 m"], [0, "#fecc5c", "3–8 m"],
 ];
 const heightColour = (h) => HEIGHT_BINS.find(([min]) => h >= min)[1];
+const STATUS_COLOURS = { concern: "#d7191c", cant_tell: "#9e9e9e", ok: "#1a9641" };
+const STATUS_LABELS = { concern: "Concern", cant_tell: "Can't tell", ok: "OK" };
+// Model output is untrusted: escape before it touches innerHTML.
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 let map;                 // adapter
 let layers = {};         // name -> handle
@@ -27,6 +31,12 @@ function styleFor(layer, props) {
     case "buildings": return props.home
       ? { stroke: "#00e5ff", weight: 3, fill: "#00e5ff", fillOpacity: 0.25 }
       : { stroke: "#ffffff", weight: 1, fill: "#ffffff", fillOpacity: 0.15 };
+    case "findings": return {
+      stroke: props.lidar_result === "disagree" ? "#ff9800" : "#ffffff", // orange outline = LiDAR disagrees
+      weight: props.lidar_result === "disagree" ? 4 : 2,
+      fill: STATUS_COLOURS[props.status], fillOpacity: 1, approx: props.approx,
+      pin: { concern: "!", cant_tell: "?", ok: "✓" }[props.status],
+    };
     case "trees": {
       const c = treeColourEl.value === "zone" ? ZONE_COLOURS[props.zone] : heightColour(props.height_m);
       return { stroke: "#000000", weight: 1, fill: c, fillOpacity: 0.9, radius: 3 + Math.min(props.height_m, 35) / 7 };
@@ -34,7 +44,21 @@ function styleFor(layer, props) {
   }
 }
 
+function findingPopup(p) {
+  const dot = p.x != null && p.w
+    ? `<span class="crop-dot" style="left:${(100 * p.x / p.w).toFixed(1)}%;top:${(100 * p.y / p.h).toFixed(1)}%"></span>` : "";
+  return `<div class="finding">
+    <b style="color:${STATUS_COLOURS[p.status]}">${STATUS_LABELS[p.status]}</b> · ${esc(ZONE_LABELS[p.zone])} · ${esc(p.backend)}<br>
+    <i>${esc(p.question)}</i><br>
+    ${esc(p.reason)} <span class="hint">(confidence ${esc(p.confidence)})</span><br>
+    <span class="lidar-${esc(p.lidar_result)}">LiDAR ${esc(p.lidar_result)}: ${esc(p.lidar_note)}</span>
+    ${p.approx ? '<br><span class="hint">Pin position is approximate (no spot given).</span>' : ""}
+    ${p.crop ? `<div class="crop-wrap"><img src="${p.crop}" alt="zone crop">${dot}</div>` : ""}
+  </div>`;
+}
+
 function popupFor(layer, p) {
+  if (layer === "findings") return findingPopup(p);
   if (layer === "trees") {
     return `<b>Tree ${p.height_m} m</b><br>Trunk ${p.dist_to_home_m} m from home (${ZONE_LABELS[p.zone]})<br>` +
       `Crown edge ${p.crown_edge_to_home_m} m (${ZONE_LABELS[p.crown_zone]})<br>Crown radius ≈ ${p.crown_radius_m} m` +
@@ -98,6 +122,73 @@ async function show(id, summary) {
   if (extent) map.fitBounds(extent);
   renderSummary(summary);
   statusEl.textContent = `Done in ${summary.elapsed_s}s`;
+  history.replaceState(null, "", `?id=${id}`);
+  await loadFindings(id);
+}
+
+const aiEl = document.getElementById("ai");
+const aiBackendEl = document.getElementById("aiBackend");
+const aiStatusEl = document.getElementById("aiStatus");
+const aiTotalsEl = document.getElementById("aiTotals");
+
+async function setupAi() {
+  const st = await (await fetch("/api/ai/status")).json();
+  aiBackendEl.innerHTML = Object.entries(st.backends).map(([k, b]) =>
+    `<option value="${k}" ${b.available ? "" : "disabled"}>${k === "local" ? "Local" : "Claude"} (${esc(b.model)})${b.available ? "" : " – unavailable"}</option>`).join("");
+  const firstOk = Object.entries(st.backends).find(([, b]) => b.available);
+  if (firstOk) aiBackendEl.value = firstOk[0];
+  aiBackendEl.title = Object.values(st.backends).map((b) => b.detail).join("\n");
+  aiBackendEl.addEventListener("change", () => current && loadFindings(current.id));
+  document.getElementById("aiRun").addEventListener("click", runAi);
+}
+
+async function runAi() {
+  if (!current) return;
+  const backend = aiBackendEl.value;
+  const r = await fetch("/api/ai/run", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: current.id, backend }) });
+  if (!r.ok) { aiStatusEl.textContent = `Error: ${(await r.json()).detail}`; return; }
+  for (;;) {
+    const j = await (await fetch(`/api/ai/job/${current.id}/${backend}`)).json();
+    aiStatusEl.textContent = j.message;
+    if (j.status === "done") return loadFindings(current.id);
+    if (j.status === "error") { aiStatusEl.textContent = `Error: ${j.message}`; return; }
+    await new Promise((res) => setTimeout(res, 1500));
+  }
+}
+
+async function loadFindings(id) {
+  if (layers.findings) { layers.findings.remove(); layers.findings = null; }
+  aiEl.hidden = false;
+  document.getElementById("compareLink").href = `compare.html?id=${id}`;
+  const backend = aiBackendEl.value || "local";
+  const r = await fetch(`/api/ai/${id}/${backend}`);
+  if (!r.ok) { aiStatusEl.textContent = "No findings yet for this backend. Press Run."; aiTotalsEl.innerHTML = ""; return; }
+  const res = await r.json();
+  const feats = [];
+  for (const z of res.zones) {
+    const crop = z.crop ? `/api/property/${id}/crop/${z.zone}.png` : null;
+    for (const f of z.findings) {
+      if (f.status === "ok" && f.lidar.result !== "disagree") continue; // pin concerns, can't-tells and conflicts
+      feats.push({ type: "Feature", geometry: { type: "Point", coordinates: [f.geo.lng, f.geo.lat] },
+        properties: { zone: z.zone, backend: res.model, status: f.status, confidence: f.confidence, reason: f.reason,
+          question: f.question, lidar_result: f.lidar.result, lidar_note: f.lidar.note, approx: f.geo.approx, crop,
+          x: f.location?.x ?? null, y: f.location?.y ?? null, w: z.crop_w ?? null, h: z.crop_h ?? null } });
+    }
+  }
+  layers.findings = map.addGeoJSON({ type: "FeatureCollection", features: feats },
+    (p) => styleFor("findings", p), (p) => popupFor("findings", p));
+  applyToggles();
+  const t = res.totals;
+  aiStatusEl.textContent = `${res.model}, checklist ${res.checklist_version}`;
+  const count = (st) => res.zones.reduce((n, z) => n + z.findings.filter((f) => f.status === st).length, 0);
+  const sw = (bg, extra = "") => `<span class="swatch" style="display:inline-block;vertical-align:middle;background:${bg};${extra}"></span>`;
+  aiTotalsEl.innerHTML = `<table>
+    <tr><td>${sw(STATUS_COLOURS.concern)} Concerns</td><td>${count("concern")}</td></tr>
+    <tr><td>${sw(STATUS_COLOURS.cant_tell)} Can't tell</td><td>${count("cant_tell")}</td></tr>
+    <tr><td>${sw(STATUS_COLOURS.ok)} OK (not pinned)</td><td>${count("ok")}</td></tr>
+    <tr><td>${sw("#fff", "border:3px solid #ff9800")} LiDAR disagrees</td><td>${t.lidar_disagreements}</td></tr>
+    <tr><td>Time · cost</td><td>${t.latency_s}s · $${t.cost_usd.toFixed(3)}</td></tr></table>`;
 }
 
 function renderSummary(s) {
@@ -178,8 +269,13 @@ async function googleAdapter(cfg) {
         const s = style(p);
         return {
           strokeColor: s.stroke, strokeWeight: s.weight, fillColor: s.fill, fillOpacity: s.fillOpacity,
-          icon: s.radius ? { path: google.maps.SymbolPath.CIRCLE, scale: s.radius, fillColor: s.fill,
-            fillOpacity: s.fillOpacity, strokeColor: s.stroke, strokeWeight: s.weight } : undefined,
+          icon: s.pin
+            ? { path: "M0 0C-3-9-11-12-11-20A11 11 0 1 1 11-20C11-12 3-9 0 0Z", scale: 1.1, fillColor: s.fill,
+              fillOpacity: 1, strokeColor: s.stroke, strokeWeight: s.weight, labelOrigin: new google.maps.Point(0, -20) }
+            : s.radius ? { path: google.maps.SymbolPath.CIRCLE, scale: s.radius, fillColor: s.fill,
+              fillOpacity: s.fillOpacity, strokeColor: s.stroke, strokeWeight: s.weight } : undefined,
+          label: s.pin ? { text: s.pin, color: "#fff", fontWeight: "700" } : undefined,
+          zIndex: s.pin ? 1000 : undefined,
         };
       });
       apply();
@@ -207,7 +303,7 @@ async function leafletAdapter() {
   return {
     kind: "leaflet",
     onClick(cb) { lmap.on("click", (e) => cb(e.latlng.lat, e.latlng.lng)); },
-    fitBounds(b) { lmap.fitBounds([[b.south, b.west], [b.north, b.east]]); },
+    fitBounds(b) { lmap.invalidateSize(); lmap.fitBounds([[b.south, b.west], [b.north, b.east]]); },
     addImage(url, b) {
       const o = L.imageOverlay(url, [[b.south, b.west], [b.north, b.east]], { interactive: false }).addTo(lmap);
       return { show: (v) => (v ? o.addTo(lmap) : o.remove()), remove: () => o.remove(), restyle() {} };
@@ -216,7 +312,13 @@ async function leafletAdapter() {
       const toLeaflet = (s) => ({ color: s.stroke, weight: s.weight, fillColor: s.fill, fillOpacity: s.fillOpacity, radius: s.radius });
       const g = L.geoJSON(fc, {
         style: (f) => toLeaflet(style(f.properties)),
-        pointToLayer: (f, ll) => L.circleMarker(ll, toLeaflet(style(f.properties))),
+        pointToLayer: (f, ll) => {
+          const s = style(f.properties);
+          if (!s.pin) return L.circleMarker(ll, toLeaflet(s));
+          return L.marker(ll, { riseOnHover: true, zIndexOffset: 1000, icon: L.divIcon({
+            className: "fpin-wrap", iconSize: [26, 34], iconAnchor: [13, 34], popupAnchor: [0, -30],
+            html: `<span class="fpin" style="background:${s.fill};border-color:${s.stroke};opacity:${s.approx ? 0.75 : 1}"><b>${s.pin}</b></span>` }) });
+        },
         onEachFeature: (f, l) => l.bindPopup(() => popup(f.properties)),
       }).addTo(lmap);
       return {
@@ -264,6 +366,12 @@ async function main() {
   map = cfg.googleMapsApiKey ? await googleAdapter(cfg) : await leafletAdapter();
   map.onClick((lat, lng) => assess(lat, lng).catch((e) => { statusEl.textContent = e.message; }));
   renderLegend();
+  await setupAi();
+  const qid = new URLSearchParams(location.search).get("id");
+  if (qid && /^[0-9a-f]{12}$/.test(qid)) {
+    const s = await (await fetch(`/api/assess/${qid}`)).json();
+    if (s.summary) return show(qid, s.summary);
+  }
   statusEl.textContent = cfg.googleMapsApiKey
     ? "Ready: click a home"
     : "Ready (no Google Maps key: using Leaflet fallback): click a home";

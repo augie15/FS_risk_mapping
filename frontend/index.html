@@ -24,6 +24,7 @@
         <label><input type="checkbox" data-layer="zones" checked> Ignition zones</label>
         <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
         <label><input type="checkbox" data-layer="trees" checked> Trees (LiDAR)</label>
+        <label><input type="checkbox" data-layer="findings" checked> AI findings</label>
         <label class="sub">Colour trees by
           <select id="treeColour">
             <option value="height">height</option>
@@ -33,6 +34,16 @@
         <div id="legend"></div>
       </section>
       <section id="summary" hidden></section>
+      <section id="ai" hidden>
+        <h2>AI findings</h2>
+        <div class="ai-row">
+          <select id="aiBackend"></select>
+          <button id="aiRun" type="button">Run</button>
+        </div>
+        <p id="aiStatus" class="hint"></p>
+        <div id="aiTotals"></div>
+        <p><a id="compareLink" href="compare.html">Compare local vs Claude →</a></p>
+      </section>
       <footer class="attr">
         Analysis data: LidarBC and ParcelMap BC (Open Government Licence – British Columbia),
         building footprints © Microsoft (ODbL). Based on FireSmart BC guidance; not an official

@@ -45,7 +45,7 @@ def read_points(paths: list[Path], bounds: tuple[float, float, float, float]) ->
             "z": np.concatenate(zs), "c": np.concatenate(cs)}
 
 
-def normalized_dsm(pts: dict[str, np.ndarray], bounds):
+def normalized_dsm(pts: dict[str, np.ndarray], bounds, return_dtm: bool = False):
     """Height above ground of the highest return per cell (unsmoothed), plus transform and stats."""
     minx, miny, maxx, maxy = bounds
     w = int(np.ceil((maxx - minx) / CELL))
@@ -85,6 +85,8 @@ def normalized_dsm(pts: dict[str, np.ndarray], bounds):
     ndsm = np.clip(ndsm, 0, 80)
     stats = {"points": int(len(x)), "ground_points": int(g.sum()),
              "density_pts_m2": round(len(x) / ((maxx - minx) * (maxy - miny)), 1)}
+    if return_dtm:
+        return ndsm.astype("float32"), transform, stats, dtm.astype("float32")
     return ndsm.astype("float32"), transform, stats
 
 

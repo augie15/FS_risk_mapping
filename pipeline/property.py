@@ -36,7 +36,7 @@ ZONES = [
 ]
 ASSUMED_HOUSE_M = 12.0
 HOME_SEARCH_M = 60.0
-PIPELINE_VERSION = 5
+PIPELINE_VERSION = 6
 
 
 def property_id(lat: float, lng: float) -> str:
@@ -179,7 +179,11 @@ def assess(lat: float, lng: float, progress=lambda m: None, force: bool = False)
             notes.append("LiDAR tile found but almost no points inside the 100 m zone.")
         else:
             progress(f"Building height model from {len(pts['x']):,} points")
-            ndsm, tr, stats = lidar.normalized_dsm(pts, bounds)
+            ndsm, tr, stats, dtm = lidar.normalized_dsm(pts, bounds, return_dtm=True)
+            with rasterio.open(out / "dtm.tif", "w", driver="GTiff", height=dtm.shape[0],
+                               width=dtm.shape[1], count=1, dtype="float32", crs=f"EPSG:{epsg}",
+                               transform=tr, compress="deflate") as dst:
+                dst.write(dtm, 1)
             lidar_info = {**stats, "year": use[0]["year"], "project": use[0].get("oper_name"),
                           "nominal_density": use[0].get("density"), "tiles": [t["filename"] for t in use]}
             refined = lidar.refine_footprint(ndsm, tr, home_u)

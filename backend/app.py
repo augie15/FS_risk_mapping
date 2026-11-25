@@ -17,6 +17,11 @@ from pipeline.property import PROCESSED, assess, property_id
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
+from pipeline.ai import backends as ai_backends  # noqa: E402  (reads model settings from .env)
+from pipeline.ai import checklist as ai_checklist  # noqa: E402
+from pipeline.ai import marks as ai_marks  # noqa: E402
+from pipeline.ai import runner as ai_runner  # noqa: E402
+
 app = FastAPI(title="FS Risk Mapping")
 
 # In-memory job table. One prototype user, one process: no queue needed.
@@ -111,6 +116,135 @@ def property_ortho(pid: str):
     if not (out / "ortho.png").exists():
         raise HTTPException(404, "no orthophoto for this property")
     return FileResponse(out / "ortho.png", media_type="image/png")
+
+
+# ---------------------------------------------------------------- AI findings
+
+BACKENDS = ("local", "claude")
+_ai_jobs: dict[str, dict] = {}
+
+
+@app.get("/api/ai/status")
+def ai_status() -> dict:
+    """Which backends can run. Never returns the key itself."""
+    out = {}
+    for name in BACKENDS:
+        be = ai_backends.get(name)
+        ok, why = be.available()
+        out[name] = {"available": ok, "detail": why, "model": be.model}
+    return {"backends": out, "checklist_version": ai_checklist.load()["version"]}
+
+
+@app.get("/api/ai/checklist")
+def ai_checklist_json() -> dict:
+    return ai_checklist.load()
+
+
+class AIRunRequest(BaseModel):
+    id: str
+    backend: str
+
+
+def _ai_run(key: str, pid: str, backend: str) -> None:
+    def progress(msg: str) -> None:
+        with _lock:
+            _ai_jobs[key]["message"] = msg
+    try:
+        ai_runner.run(pid, backend, progress=progress)
+        with _lock:
+            _ai_jobs[key].update(status="done", message="Done")
+    except Exception as e:
+        traceback.print_exc()
+        with _lock:
+            _ai_jobs[key].update(status="error", message=str(e))
+
+
+@app.post("/api/ai/run")
+def ai_run(req: AIRunRequest) -> dict:
+    out = _check_id(req.id)
+    if req.backend not in BACKENDS:
+        raise HTTPException(400, "unknown backend")
+    if not (out / "summary.json").exists():
+        raise HTTPException(404, "run the property assessment first")
+    ok, why = ai_backends.get(req.backend).available()
+    if not ok:
+        raise HTTPException(409, why)
+    key = f"{req.id}:{req.backend}"
+    with _lock:
+        if _ai_jobs.get(key, {}).get("status") == "running":
+            return {"key": key, **_ai_jobs[key]}
+        _ai_jobs[key] = {"status": "running", "message": "Queued"}
+    threading.Thread(target=_ai_run, args=(key, req.id, req.backend), daemon=True).start()
+    return {"key": key, "status": "running", "message": "Queued"}
+
+
+@app.get("/api/ai/job/{pid}/{backend}")
+def ai_job(pid: str, backend: str) -> dict:
+    _check_id(pid)
+    with _lock:
+        job = _ai_jobs.get(f"{pid}:{backend}")
+    return job or {"status": "idle", "message": ""}
+
+
+@app.get("/api/ai/{pid}/{backend}")
+def ai_result(pid: str, backend: str):
+    out = _check_id(pid)
+    if backend not in BACKENDS or not (out / "ai" / f"{backend}.json").exists():
+        raise HTTPException(404, "no findings yet")
+    return FileResponse(out / "ai" / f"{backend}.json", media_type="application/json")
+
+
+@app.get("/api/property/{pid}/crop/{zone}.png")
+def property_crop(pid: str, zone: str):
+    out = _check_id(pid)
+    if zone not in {z["zone"] for z in ai_checklist.load()["zones"]}:
+        raise HTTPException(404, "no such zone")
+    path = out / "ai" / f"crop_{zone}.png"
+    if not path.exists():
+        raise HTTPException(404, "no crop")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/properties")
+def properties() -> list[dict]:
+    """Processed properties (for the comparison page). Ids only, plus what has been run."""
+    rows = []
+    for d in sorted(PROCESSED.glob("*/summary.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        s = json.loads(d.read_text())
+        rows.append({"id": s["id"], "trees": s["trees"]["count"], "home": s["home"]["source"],
+                     "ai": [b for b in BACKENDS if (d.parent / "ai" / f"{b}.json").exists()]})
+    return rows
+
+
+class Mark(BaseModel):
+    property_id: str
+    backend: str
+    zone: str
+    item_id: str
+    verdict: str | None = Field(default=None, pattern="^(correct|wrong)$")  # None clears the mark
+    model: str | None = None
+    model_status: str | None = None
+    true_status: str | None = Field(default=None, pattern="^(ok|concern|cant_tell)$")
+    note: str | None = Field(default=None, max_length=500)
+    checklist_version: str | None = None
+
+
+@app.get("/api/marks/{pid}")
+def get_marks(pid: str) -> list[dict]:
+    _check_id(pid)
+    return ai_marks.for_property(pid)
+
+
+@app.post("/api/marks")
+def put_mark(m: Mark) -> dict:
+    _check_id(m.property_id)
+    if m.backend not in BACKENDS or m.item_id not in ai_checklist.items_by_id():
+        raise HTTPException(400, "unknown backend or item")
+    if m.verdict is None:
+        ai_marks.delete(m.property_id, m.backend, m.zone, m.item_id)
+    else:
+        ai_marks.put(m.model_dump())
+    return {"ok": True}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")

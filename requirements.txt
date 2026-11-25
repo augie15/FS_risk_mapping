@@ -11,3 +11,5 @@ pyproj==3.8.0
 rasterio==1.5.2
 laspy==2.7.0
 lazrs==0.9.0
+anthropic==2.14.0
+pillow==13.0.0

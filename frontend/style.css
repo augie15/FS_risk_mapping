@@ -24,3 +24,14 @@ main { flex: 1; display: flex; min-height: 0; }
   main { flex-direction: column; }
   #panel { width: 100%; max-height: 40vh; border-left: 0; border-top: 1px solid #ccd; }
 }
+.ai-row { display: flex; gap: .4rem; }
+.ai-row select { flex: 1; min-width: 0; }
+.finding { max-width: 300px; font-size: .85rem; line-height: 1.35; }
+.crop-wrap { position: relative; margin-top: .4rem; }
+.crop-wrap img { width: 100%; display: block; border-radius: 3px; }
+.crop-dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px #d7191c; }
+.lidar-disagree { color: #b35c00; font-weight: 600; }
+.lidar-agree { color: #1a7a3a; }
+.fpin-wrap { background: none; border: 0; }
+.fpin { position: absolute; left: 0; top: 0; width: 26px; height: 26px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 3px solid #fff; box-shadow: 0 1px 4px #0008; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
+.fpin b { transform: rotate(45deg); color: #fff; font: 700 14px/1 system-ui, sans-serif; }

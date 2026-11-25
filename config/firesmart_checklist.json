@@ -1,0 +1,74 @@
+{
+  "version": "2026-11-25.1",
+  "title": "Aerial FireSmart checklist (items checkable from above)",
+  "disclaimer": "Based on FireSmart BC guidance; not an official FireSmart assessment.",
+  "sources": [
+    "FireSmart BC, 'FireSmart BC Begins At Home Guide' (web edition), https://begins-at-home-guide.firesmartbc.ca/",
+    "FireSmart BC, 'Home Ignition Zone Self-Assessment' (form 2307-02, PDF modified 2025-06-16), https://firesmartbc.ca/resource/hiz-self-assessment/"
+  ],
+  "statuses": ["ok", "concern", "cant_tell"],
+  "zones": [
+    {
+      "zone": "immediate",
+      "label": "Immediate Zone (0-1.5 m)",
+      "goal": "A non-combustible area from the house out to 1.5 m around the home and any attachments.",
+      "items": [
+        {"id": "imm_combustibles", "question": "Is the 1.5 m strip around the house free of combustibles (plants, shrubs, bark mulch, firewood, stored items)?",
+         "ok_when": "Bare soil, gravel, rock, pavement or short irrigated lawn right against the walls.", "aerial": "partial", "lidar_check": null},
+        {"id": "imm_roof_material", "question": "Does the roof covering look fire-rated (metal, asphalt shingle, clay or concrete tile) rather than untreated wood shakes?",
+         "ok_when": "Metal, asphalt or tile roof. Wood shake texture is a concern.", "aerial": "yes", "lidar_check": null},
+        {"id": "imm_roof_debris", "question": "Are the roof and gutters free of needles, leaves and other debris?",
+         "ok_when": "Clean roof surfaces and valleys; no visible needle or leaf build-up.", "aerial": "partial", "lidar_check": null},
+        {"id": "imm_overhanging_trees", "question": "Is the roof free of overhanging tree branches, with no tree crowns touching the house?",
+         "ok_when": "No crowns over or touching the roof.", "aerial": "yes", "lidar_check": "crowns_touching_home"},
+        {"id": "imm_attachments", "question": "Are attached decks, fences and boardwalks non-combustible or separated from the house (e.g. a metal gate where a wooden fence meets the house)?",
+         "ok_when": "No wooden deck, fence or boardwalk joined directly to the house, or it is visibly non-combustible.", "aerial": "partial", "lidar_check": null}
+      ]
+    },
+    {
+      "zone": "intermediate",
+      "label": "Intermediate Zone (1.5-10 m)",
+      "goal": "Low, well-spaced, fire-resistant plants; no conifers, woodpiles or easily ignited fuels.",
+      "items": [
+        {"id": "int_conifers", "question": "Is the zone free of conifers (spruce, fir, pine, cedar, juniper)? Deciduous trees are acceptable.",
+         "ok_when": "No conifers within 10 m of the house.", "aerial": "partial", "lidar_check": "trees_in_zone"},
+        {"id": "int_woodpile", "question": "Is the zone free of firewood piles and stacked lumber?",
+         "ok_when": "No woodpile within 10 m of the house.", "aerial": "partial", "lidar_check": null},
+        {"id": "int_outbuildings", "question": "Are sheds, garages and other outbuildings within 10 m absent (or, if present, do they look built to the same standard as the house)?",
+         "ok_when": "No outbuildings within 10 m, or they look non-combustible.", "aerial": "yes", "lidar_check": "outbuildings_in_zone"},
+        {"id": "int_vehicles_propane", "question": "Is the zone free of vehicles, RVs, boats, trailers and propane tanks parked or stored next to the house?",
+         "ok_when": "None visible within 10 m.", "aerial": "yes", "lidar_check": null},
+        {"id": "int_grass_mulch", "question": "Is the ground cover short green grass, gravel or hard surface, rather than tall dry grass, bark mulch or dense shrubs?",
+         "ok_when": "Mown green lawn, gravel or paving.", "aerial": "partial", "lidar_check": null}
+      ]
+    },
+    {
+      "zone": "extended",
+      "label": "Extended Zone (10-30 m)",
+      "goal": "Thinned and pruned: conifer crowns at least 3 m apart, branches pruned to 2 m, ladder fuels and woody debris removed.",
+      "items": [
+        {"id": "ext_crown_spacing", "question": "Are tree crowns (especially conifers) spaced at least 3 m apart?",
+         "ok_when": "Gaps of 3 m or more between crowns, or few trees.", "aerial": "yes", "lidar_check": "crown_gaps"},
+        {"id": "ext_canopy_continuity", "question": "Is there a break in the canopy between surrounding forest and the house (no continuous canopy reaching toward the home)?",
+         "ok_when": "Open ground or scattered trees between forest and house.", "aerial": "yes", "lidar_check": "canopy_cover"},
+        {"id": "ext_ladder_fuels", "question": "Is the zone free of ladder fuels (small conifers and shrubs under taller trees)?",
+         "ok_when": "Clean understorey under tall trees.", "aerial": "partial", "lidar_check": null},
+        {"id": "ext_surface_debris", "question": "Is the ground free of woody debris, slash piles and fallen trees?",
+         "ok_when": "No slash piles or deadfall visible.", "aerial": "partial", "lidar_check": null}
+      ]
+    },
+    {
+      "zone": "outer",
+      "label": "30-100 m",
+      "goal": "Landscape context. FireSmart BC guidance focuses on 0-30 m; beyond 30 m fuel reduction is a neighbourhood and land-manager effort.",
+      "items": [
+        {"id": "out_fuel_type", "question": "Is the dominant fuel type low hazard (deciduous trees, irrigated or grazed field, developed land) rather than continuous conifer forest?",
+         "ok_when": "Mostly deciduous, field or developed. Name the dominant fuel type in the reason.", "aerial": "yes", "lidar_check": "canopy_cover"},
+        {"id": "out_continuous_forest", "question": "Is there no continuous forest within 100 m that could carry a crown fire toward the home?",
+         "ok_when": "Forest is absent, patchy or separated from the home by open ground.", "aerial": "yes", "lidar_check": "canopy_cover"},
+        {"id": "out_slope", "question": "Is the home free of a significant slope below it (fire spreads faster uphill)?",
+         "ok_when": "Flat ground or the home sits below the slope. Use the LiDAR slope facts; imagery alone rarely shows slope.", "aerial": "no", "lidar_check": "slope"}
+      ]
+    }
+  ]
+}

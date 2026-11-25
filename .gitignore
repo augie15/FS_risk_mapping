@@ -11,3 +11,6 @@ data/processed/*
 *.laz
 *.tif
 *.tiff
+data/*.jsonl
+data/*.sqlite
+data/*.sqlite-journal
