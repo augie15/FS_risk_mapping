@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "fs-risk-mapping", "runtimeExecutable": ".venv/bin/uvicorn", "runtimeArgs": ["backend.app:app", "--reload", "--port", "8800"], "port": 8800 }
+  ]
+}
