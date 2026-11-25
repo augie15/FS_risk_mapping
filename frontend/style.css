@@ -1,7 +1,7 @@
 html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
 body { display: flex; flex-direction: column; }
 header { display: flex; align-items: center; gap: 1rem; padding: .5rem 1rem; background: #1f2a24; color: #eef; }
-header h1 { font-size: 1.1rem; margin: 0; }
+header h1 { font-size: 1.3rem; margin: 0; }
 #status { font-size: .85rem; opacity: .85; }
 main { flex: 1; display: flex; min-height: 0; }
 #map { flex: 1; min-width: 0; }
