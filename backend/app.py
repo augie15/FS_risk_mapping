@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from pipeline.property import PROCESSED, assess, property_id
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env", override=True)  # .env wins over keys inherited from the shell
 
 from pipeline.ai import backends as ai_backends  # noqa: E402  (reads model settings from .env)
 from pipeline.ai import checklist as ai_checklist  # noqa: E402
