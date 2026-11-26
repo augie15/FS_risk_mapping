@@ -122,3 +122,70 @@ def test_claude_request_shape_cost_and_cap(stub_client):
     be.call(prompt.SYSTEM, "facts", None, prompt.schema("outer"))
     with pytest.raises(backends.SpendCapExceeded):
         be.call(prompt.SYSTEM, "facts", None, prompt.schema("outer"))
+
+
+def test_concurrent_lidar_download_is_single_and_complete(tmp_path, monkeypatch):
+    """Two threads asking for the same tile: one download, one intact file, no leftovers."""
+    import time as _time
+    from pipeline import sources
+
+    payload = b"x" * (3 << 20)
+    calls = []
+
+    class _Resp:
+        headers = {"Content-Length": str(len(payload))}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, n):
+            for i in range(0, len(payload), 1 << 20):
+                _time.sleep(0.05)  # widen the race window
+                yield payload[i:i + (1 << 20)]
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        return _Resp()
+
+    monkeypatch.setattr(sources, "RAW", tmp_path)
+    monkeypatch.setattr(sources.requests, "get", fake_get)
+    tile = {"filename": "t.laz", "s3Url": "https://example.invalid/t.laz"}
+    out = []
+    ts = [threading.Thread(target=lambda: out.append(sources.download_lidar(tile))) for _ in range(2)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert len(calls) == 1
+    assert (tmp_path / "lidar" / "t.laz").read_bytes() == payload
+    assert not list((tmp_path / "lidar").glob("*.part"))
+
+
+def test_truncated_lidar_download_is_not_cached(tmp_path, monkeypatch):
+    from pipeline import sources
+
+    class _Short:
+        headers = {"Content-Length": "100"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, n):
+            yield b"x" * 40
+
+    monkeypatch.setattr(sources, "RAW", tmp_path)
+    monkeypatch.setattr(sources.requests, "get", lambda url, **kw: _Short())
+    with pytest.raises(IOError):
+        sources.download_lidar({"filename": "s.laz", "s3Url": "https://example.invalid/s.laz"})
+    assert not (tmp_path / "lidar" / "s.laz").exists()
+    assert not list((tmp_path / "lidar").glob("*.part"))

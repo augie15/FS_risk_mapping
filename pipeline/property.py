@@ -117,6 +117,11 @@ def assess(lat: float, lng: float, progress=lambda m: None, force: bool = False)
             progress("Cached result")
             return s
     out.mkdir(parents=True, exist_ok=True)
+    # AI findings refer to this run's trees (T-numbers), zones and crops. Re-running rewrites all
+    # of those, so set old findings aside (kept, not deleted: Claude answers cost money).
+    if (out / "ai").exists():
+        (out / "ai").rename(out / f"ai_stale_{time.strftime('%Y%m%dT%H%M%S')}")
+    run_id = time.strftime("%Y-%m-%dT%H:%M:%S")
     t0 = time.time()
     notes: list[str] = []
 
@@ -293,6 +298,7 @@ def assess(lat: float, lng: float, progress=lambda m: None, force: bool = False)
         "ortho": ortho,
         "notes": notes,
         "elapsed_s": round(time.time() - t0, 1),
+        "run_id": run_id,
         "attribution": ("Contains information licensed under the Open Government Licence – "
                         "British Columbia (LidarBC, ParcelMap BC). Building footprints © Microsoft "
                         "(ODbL) / © OpenStreetMap contributors. Based on FireSmart BC guidance; "

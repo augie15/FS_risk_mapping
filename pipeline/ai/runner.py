@@ -47,6 +47,8 @@ def run(pid: str, backend_name: str, progress=lambda m: None) -> dict:
     pd, inputs = prepare(pid)
     result = {"property_id": pid, "backend": be.name, "model": be.model,
               "checklist_version": checklist.load()["version"],
+              "property_run_id": pd.summary.get("run_id"),
+              "pipeline_version": pd.summary.get("pipeline_version"),
               "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "zones": []}
     for z in checklist.load()["zones"]:
         key = z["zone"]
@@ -69,7 +71,9 @@ def run(pid: str, backend_name: str, progress=lambda m: None) -> dict:
             findings, problems = validate.parse_and_check("{}", key, crop)
             problems.insert(0, res.error)
         n = len(findings)
-        listed = {t["id"] for t in facts.get("trees", [])}
+        # Every LiDAR tree whose trunk or crown edge is in this zone, not only the 40 drawn/listed:
+        # a model may correctly name a tree it reads off the crop of a busy zone.
+        listed = {t["id"] for t in pd.trees if key in (t["zone"], t["crown_zone"])}
         for i, f in enumerate(findings):
             f["lidar"] = validate.lidar_check(f, facts)
             bad = validate.unknown_tree_refs(f["reason"], listed)

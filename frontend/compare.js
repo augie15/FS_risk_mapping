@@ -85,6 +85,7 @@ function card(b) {
     <tr><td>Errors</td><td>${t.errors}</td></tr>
     <tr><td>LiDAR disagreements</td><td>${t.lidar_disagreements}</td></tr>
     <tr><td>Run</td><td>${esc(r.finished || r.started)}</td></tr></table>
+    ${r.stale ? '<div class="note">⚠ Out of date: the property was re-run after these findings. Re-run before marking.</div>' : ""}
     ${st?.available ? `<button data-run="${b}" type="button" style="margin-top:.4rem">Re-run</button>` : ""}
     <p id="run-${b}" class="hint"></p></div>`;
 }

@@ -191,7 +191,12 @@ def ai_result(pid: str, backend: str):
     out = _check_id(pid)
     if backend not in BACKENDS or not (out / "ai" / f"{backend}.json").exists():
         raise HTTPException(404, "no findings yet")
-    return FileResponse(out / "ai" / f"{backend}.json", media_type="application/json")
+    res = json.loads((out / "ai" / f"{backend}.json").read_text())
+    summ = json.loads((out / "summary.json").read_text())
+    # Findings must come from the property run that is on disk now (same trees, zones, crops).
+    res["stale"] = (res.get("property_run_id") != summ.get("run_id")
+                    or res.get("pipeline_version") != summ.get("pipeline_version"))
+    return res
 
 
 @app.get("/api/property/{pid}/crop/{zone}.png")

@@ -105,7 +105,7 @@ async function assess(lat, lng) {
 }
 
 async function show(id, summary) {
-  for (const h of Object.values(layers)) h.remove();
+  for (const h of Object.values(layers)) h?.remove(); // a slot can be empty (no findings yet)
   layers = {};
   current = { id, summary };
   if (summary.ortho) {
@@ -158,7 +158,8 @@ async function runAi() {
 }
 
 async function loadFindings(id) {
-  if (layers.findings) { layers.findings.remove(); layers.findings = null; }
+  layers.findings?.remove();
+  Reflect.deleteProperty(layers, "findings");
   aiEl.hidden = false;
   document.getElementById("compareLink").href = `compare.html?id=${id}`;
   const backend = aiBackendEl.value || "local";
@@ -180,7 +181,10 @@ async function loadFindings(id) {
     (p) => styleFor("findings", p), (p) => popupFor("findings", p));
   applyToggles();
   const t = res.totals;
-  aiStatusEl.textContent = `${res.model}, checklist ${res.checklist_version}`;
+  aiStatusEl.textContent = res.stale
+    ? `⚠ Out of date: the property was re-run after these ${res.model} findings. Press Run again.`
+    : `${res.model}, checklist ${res.checklist_version}`;
+  aiStatusEl.classList.toggle("note", !!res.stale);
   const count = (st) => res.zones.reduce((n, z) => n + z.findings.filter((f) => f.status === st).length, 0);
   const sw = (bg, extra = "") => `<span class="swatch" style="display:inline-block;vertical-align:middle;background:${bg};${extra}"></span>`;
   aiTotalsEl.innerHTML = `<table>

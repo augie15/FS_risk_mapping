@@ -4,10 +4,13 @@ Everything downloaded is cached under data/raw (git-ignored).
 """
 from __future__ import annotations
 
+import fcntl
 import gzip
 import json
 import math
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -173,20 +176,34 @@ def download_lidar(tile: dict, progress: Progress = _noop) -> Path:
     if dest.exists():
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".part")
-    with requests.get(tile["s3Url"], headers=UA, stream=True, timeout=120) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("Content-Length", 0))
-        done = 0
-        last = -1
-        with open(tmp, "wb") as fh:
-            for chunk in r.iter_content(1 << 20):
-                fh.write(chunk)
-                done += len(chunk)
-                mb = done // (10 << 20)
-                if mb != last:
-                    last = mb
-                    progress(f"Downloading LiDAR {tile['filename']}: "
-                             f"{done / 1e6:.0f} / {total / 1e6:.0f} MB")
-    tmp.rename(dest)
+    # One downloader per tile across threads *and* processes (server + CLI): an exclusive lock
+    # file. Whoever waits finds the finished tile on the re-check below.
+    with open(dest.with_name(dest.name + ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            if dest.exists():
+                return dest
+            fd, tmp_name = tempfile.mkstemp(prefix=dest.name + ".", suffix=".part", dir=dest.parent)
+            tmp = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "wb") as fh, \
+                        requests.get(tile["s3Url"], headers=UA, stream=True, timeout=120) as r:
+                    r.raise_for_status()
+                    total = int(r.headers.get("Content-Length", 0))
+                    done, last = 0, -1
+                    for chunk in r.iter_content(1 << 20):
+                        fh.write(chunk)
+                        done += len(chunk)
+                        if done // (10 << 20) != last:
+                            last = done // (10 << 20)
+                            progress(f"Downloading LiDAR {tile['filename']}: "
+                                     f"{done / 1e6:.0f} / {total / 1e6:.0f} MB")
+                if total and done != total:
+                    raise IOError(f"LiDAR download truncated: {done} of {total} bytes")
+                os.replace(tmp, dest)  # atomic: readers never see a half-written tile
+            finally:
+                if tmp.exists():
+                    tmp.unlink()
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
     return dest
