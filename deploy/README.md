@@ -4,19 +4,39 @@ Target: the app at `https://fsmapping.augiesrentals.ca`, behind a password, for 
 It is a prototype, not a public site.
 
 ```
-browser ──HTTPS──> Caddy (TLS + basic_auth) ──HTTP──> 127.0.0.1:8800 uvicorn (this app)
-                                                       │
-                                                       ├─ data/ (LiDAR cache, results, labels)
-                                                       └─ Ollama on the Mac, over WireGuard (optional)
+browser ──HTTPS──> Caddy (TLS + basic_auth, strips Authorization) ──HTTP──> 127.0.0.1:8800 uvicorn
+                                                                            (user fsmap)
+                                                                             │
+                                                    /srv/fsmapping/data  <───┤ the only writable path
+                                     Ollama on the Mac, over WireGuard  <────┘ (optional)
 ```
 
 - The app listens on **127.0.0.1:8800 only** and has no login of its own. The password check is
-  Caddy's `basic_auth`; that Caddy site block is kept in the ops repo, not here.
+  Caddy's `basic_auth`; that Caddy site block is kept in the ops repo, not here. Caddy strips the
+  `Authorization` header before proxying, and the app never logs request headers (uvicorn's access
+  log records method, path and status only).
 - The frontend uses relative URLs only (`api/...`, `style.css`), so it works behind the proxy
   and under basic auth without changes.
 
-Commands below assume Ubuntu 24.04, user `augie`, checkout at `/home/augie/FS_risk_mapping`.
-If you use another path or user, change `deploy/fsmapping.service` to match.
+### Isolation from the rest of the server
+
+The app is reachable from the internet behind one shared password, and the ops checkouts in
+`/home/augie` hold production secrets. So the app runs as its own system user, **`fsmap`**, with no
+login shell, and the systemd unit hides `/home` from it entirely (`ProtectHome=true`). Any
+file-read or path bug in the app cannot reach another project's `.env`.
+
+| Path | Owner | Service access |
+|---|---|---|
+| `/srv/fsmapping/app` (code checkout, `.venv`, `.env`) | `fsmap` | read-only |
+| `/srv/fsmapping/data` (LiDAR cache, results, labels, AI log) | `fsmap` | read-write, the only writable path |
+| `/home`, `/root`, `/run/user` | — | invisible |
+
+The app finds its data through `FS_DATA_DIR=/srv/fsmapping/data`, set in the unit file. Other
+hardening in the unit: `ProtectSystem=strict`, `NoNewPrivileges`, `PrivateTmp`, `PrivateDevices`,
+`RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, no capabilities.
+
+Commands below assume Ubuntu 24.04. Run them as an admin user with sudo; never run the app as that
+user.
 
 ## 1. System packages
 
@@ -41,21 +61,23 @@ No GDAL, PROJ or LAZ system libraries are needed. The pip wheels bring them:
 These wheels exist for x86_64 and aarch64 Linux on Python 3.12. If `pip` ever starts building
 one of them from source, stop: that means the Python version is wrong.
 
-## 2. Code, virtual environment and settings
+## 2. User, code, virtual environment and settings
 
 ```bash
-cd /home/augie
-git clone https://github.com/augie15/FS_risk_mapping.git
-cd FS_risk_mapping
-git checkout deploy/home-server        # or the branch you are deploying
-python3.12 -m venv .venv
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install -r requirements.txt
-mkdir -p data                           # must exist before the service starts (ReadWritePaths)
-cp .env.example .env && chmod 600 .env
+sudo useradd --system --create-home --home-dir /srv/fsmapping --shell /usr/sbin/nologin fsmap
+sudo chmod 750 /srv/fsmapping
+sudo -u fsmap git clone https://github.com/augie15/FS_risk_mapping.git /srv/fsmapping/app
+sudo -u fsmap git -C /srv/fsmapping/app checkout deploy/home-server   # or the branch you deploy
+sudo -u fsmap python3.12 -m venv /srv/fsmapping/app/.venv
+sudo -u fsmap /srv/fsmapping/app/.venv/bin/pip install --upgrade pip
+sudo -u fsmap /srv/fsmapping/app/.venv/bin/pip install -r /srv/fsmapping/app/requirements.txt
+sudo -u fsmap mkdir -p /srv/fsmapping/data       # must exist before the service starts
+sudo -u fsmap install -m 600 /srv/fsmapping/app/.env.example /srv/fsmapping/app/.env
 ```
 
-Edit `.env` (never commit it):
+Edit `/srv/fsmapping/app/.env` with `sudo -u fsmap nano /srv/fsmapping/app/.env` (never commit it,
+and never copy keys into it from the ops `.env` files; use a separate Anthropic key with its own
+spend limit):
 
 | Setting | Server value | Notes |
 |---|---|---|
@@ -67,19 +89,19 @@ Edit `.env` (never commit it):
 
 ### Data
 
-Everything the app writes is under `data/` in the checkout (git-ignored):
+Everything the app writes is under `/srv/fsmapping/data`:
 
-- `data/raw/lidar/` LidarBC LAZ tiles, about 100–300 MB each, downloaded on first use and reused.
+- `raw/lidar/` LidarBC LAZ tiles, about 100–300 MB each, downloaded on first use and reused.
   The Telkwa test area used 1.1 GB. Budget a few GB per area of interest; there is 68 GB free.
-- `data/raw/buildings/` Microsoft footprint tiles (small).
-- `data/processed/<id>/` per-property results (~10–60 MB each).
-- `data/outlines.json` operator-confirmed home outlines.
-- `data/labels.sqlite` correct/wrong marks; `data/ai_calls.jsonl` every AI call with its cost
+- `raw/buildings/` Microsoft footprint tiles (small).
+- `processed/<id>/` per-property results (~10–60 MB each).
+- `outlines.json` operator-confirmed home outlines.
+- `labels.sqlite` correct/wrong marks; `ai_calls.jsonl` every AI call with its cost
   (the daily cap is summed from this file, so do not delete it mid-day).
 
-Back up `data/outlines.json`, `data/labels.sqlite` and `data/ai_calls.jsonl`; the rest can be
-re-downloaded or recomputed. To move existing results from the Mac, copy `data/processed/` and
-those three files across (`rsync -a data/ augie@10.10.0.1:FS_risk_mapping/data/`).
+Back up `outlines.json`, `labels.sqlite` and `ai_calls.jsonl`; the rest can be re-downloaded or
+recomputed. To move existing results from the Mac, copy the Mac's `data/` into a staging folder
+you own on the server, then `sudo rsync -a --chown=fsmap:fsmap <staging>/ /srv/fsmapping/data/`.
 
 ### Local AI (Ollama on the Mac)
 
@@ -92,24 +114,39 @@ subnet in the Mac firewall. Check from the server: `curl -s http://<mac-wg-ip>:1
 ## 3. Service
 
 ```bash
-sudo cp deploy/fsmapping.service /etc/systemd/system/fsmapping.service
+sudo cp /srv/fsmapping/app/deploy/fsmapping.service /etc/systemd/system/fsmapping.service
+sudo systemd-analyze verify /etc/systemd/system/fsmapping.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now fsmapping
 systemctl status fsmapping --no-pager
 journalctl -u fsmapping -f            # logs
 ```
 
-The unit runs uvicorn as `augie` with one worker, no `--reload`, bound to 127.0.0.1:8800, with
-write access only to `data/`. After a `git pull` or a `.env` change:
-`sudo systemctl restart fsmapping` (the Claude key check is cached per process).
+The unit runs uvicorn as `fsmap` with one worker, no `--reload`, bound to 127.0.0.1:8800, with
+write access only to `/srv/fsmapping/data`. To update:
+`sudo -u fsmap git -C /srv/fsmapping/app pull`, then (if `requirements.txt` changed) the pip
+install line above, then `sudo systemctl restart fsmapping`. Restart after any `.env` change too
+(the Claude key check is cached per process).
 
-## 4. Final check (on the server)
+## 4. Final checks (on the server)
 
 ```bash
 curl -s http://127.0.0.1:8800/api/health            # {"ok":true}
 curl -s http://127.0.0.1:8800/api/ai/status | python3 -m json.tool
 ss -ltnp | grep 8800                                 # must show 127.0.0.1:8800, never 0.0.0.0
+systemctl show fsmapping -p User                     # User=fsmap
+
+# fsmap must not be able to read other projects' secrets. Each of these must FAIL:
+sudo -u fsmap cat /home/augie/augies-rentals-ops/.env
+sudo -u fsmap cat /home/augie/augies-rentals-dev/.env
+# and the running service cannot even see /home (expect "No such file or directory" or empty):
+sudo systemd-run --pipe --wait -p User=fsmap -p ProtectHome=true ls /home/augie
+systemd-analyze security fsmapping --no-pager | tail -1   # exposure score; lower is better
 ```
+
+The `sudo -u fsmap cat` check relies on ordinary file permissions (`/home/augie` should be mode
+750 or 700, and the `.env` files 600). If it succeeds, fix those permissions first: the unit's
+`ProtectHome=true` protects the running service, but a permission hole would still be a hole.
 
 Then, once the Caddy site is live, from outside: `https://fsmapping.augiesrentals.ca` asks for the
 password, and `curl -I https://fsmapping.augiesrentals.ca/api/health` without credentials gives 401.

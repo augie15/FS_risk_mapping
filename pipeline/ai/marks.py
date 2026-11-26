@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from pathlib import Path
 
-DB = Path(__file__).resolve().parents[2] / "data" / "labels.sqlite"
+from ..paths import DATA
+
+DB = DATA / "labels.sqlite"
 
 
 def _conn() -> sqlite3.Connection:

@@ -8,11 +8,12 @@ from __future__ import annotations
 import json
 import threading
 import time
-from pathlib import Path
 
 from shapely.geometry import Point, mapping, shape
 
-PATH = Path(__file__).resolve().parent.parent / "data" / "outlines.json"
+from .paths import DATA
+
+PATH = DATA / "outlines.json"
 _lock = threading.Lock()
 
 

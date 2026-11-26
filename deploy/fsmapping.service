@@ -1,11 +1,19 @@
 # systemd unit for the FS Risk Mapping app on the home server.
 #
 # Install (see deploy/README.md):
-#   sudo cp deploy/fsmapping.service /etc/systemd/system/fsmapping.service
+#   sudo cp /srv/fsmapping/app/deploy/fsmapping.service /etc/systemd/system/fsmapping.service
 #   sudo systemctl daemon-reload && sudo systemctl enable --now fsmapping
 #
-# Listens on 127.0.0.1:8800 only. Caddy terminates TLS, checks the password (basic_auth) and
-# reverse-proxies to it. Never change --host to 0.0.0.0: the app has no login of its own.
+# Listens on 127.0.0.1:8800 only. Caddy terminates TLS, checks the password (basic_auth), strips
+# the Authorization header and reverse-proxies to it. Never change --host to 0.0.0.0: the app has
+# no login of its own.
+#
+# Runs as the dedicated system user `fsmap`, never as a login user: /home (where the ops checkouts
+# and their production .env files live) is invisible to this service.
+#
+# Layout:
+#   /srv/fsmapping/app    code checkout, .venv and .env   (owned by fsmap, read-only to the service)
+#   /srv/fsmapping/data   everything the app writes         (owned by fsmap, the only writable path)
 
 [Unit]
 Description=FS Risk Mapping (FireSmart-based home assessment prototype)
@@ -14,31 +22,44 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=augie
-Group=augie
-WorkingDirectory=/home/augie/FS_risk_mapping
+User=fsmap
+Group=fsmap
+WorkingDirectory=/srv/fsmapping/app
 # .env (API keys, OLLAMA_HOST, caps) is read by the app itself from the working directory.
+Environment=FS_DATA_DIR=/srv/fsmapping/data
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
 # GDAL (inside the rasterio wheel) reads orthophotos over HTTPS; point it at the system CA list.
 Environment=CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 # One worker: jobs, the in-flight spend reservation and locks live in this one process.
-ExecStart=/home/augie/FS_risk_mapping/.venv/bin/uvicorn backend.app:app \
+# The access log records method, path and status only; no request headers are logged anywhere.
+ExecStart=/srv/fsmapping/app/.venv/bin/uvicorn backend.app:app \
     --host 127.0.0.1 --port 8800 --workers 1 \
     --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-server-header
 Restart=on-failure
 RestartSec=5
 
-# Hardening. The app writes only under data/ in the checkout.
+# Hardening.
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/home/augie/FS_risk_mapping/data
+ReadWritePaths=/srv/fsmapping/data
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
 MemoryMax=8G
 
 [Install]
