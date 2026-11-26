@@ -25,7 +25,7 @@ from rasterio.warp import Resampling, calculate_default_transform, reproject
 from shapely.geometry import Point, box, mapping, shape
 from shapely.ops import transform as shp_transform
 
-from . import lidar, outlines, roof, sources
+from . import lidar, outlines, rects, roof, sources
 
 ROOT = Path(__file__).resolve().parent.parent
 PROCESSED = ROOT / "data" / "processed"
@@ -37,7 +37,7 @@ ZONES = [
     ("extended", "Extended (10–30 m)", 10.0, 30.0),
     ("outer", "30–100 m", 30.0, 100.0),
 ]
-PIPELINE_VERSION = 7
+PIPELINE_VERSION = 8
 
 
 def property_id(lat: float, lng: float) -> str:
@@ -177,6 +177,8 @@ def assess(lat: float, lng: float, progress=lambda m: None, force: bool = False)
     confirmed = outlines.find(pid, lng, lat)
     if confirmed:
         home_u = shp_transform(to_utm, shape(confirmed["geometry"]))
+        home_rects = [shp_transform(to_utm, shape({"type": "Polygon", "coordinates": [r]}))
+                      for r in confirmed.get("rects", [])] or [home_u]
         outline = {"source": "operator-confirmed", "method": "manual", "confidence": 1.0,
                    "confidence_label": "confirmed", "updated": confirmed["updated"]}
     elif pts is not None:
@@ -187,6 +189,7 @@ def assess(lat: float, lng: float, progress=lambda m: None, force: bool = False)
         traced = roof.trace_roof(sub, dtm_t, tr_t, (click_u.x, click_u.y), hint=fp_hint)
         if traced:
             home_u = traced.pop("polygon")
+            home_rects = traced.pop("rects")
             outline = {"source": "LiDAR roof trace", **traced}
             if traced["snapped_to_nearest_roof"]:
                 notes.append("Click was just off the roof; used the nearest LiDAR roof.")
@@ -281,7 +284,8 @@ def assess(lat: float, lng: float, progress=lambda m: None, force: bool = False)
     _write(out / "zones.geojson", _fc(zone_feats))
     _write(out / "trees.geojson", _fc(trees_out))
     _write(out / "outline.geojson", _fc([{"type": "Feature", "geometry": mapping(shp_transform(to_ll, home_u)),
-                                          "properties": {**outline, "suggested": False}}]))
+                                          "properties": {**outline, "suggested": False,
+                                                         "rects": _rings_ll(home_rects, to_ll)}}]))
 
     by_zone = {k: 0 for k, *_ in ZONES}
     crowns_by_zone = {k: 0 for k, *_ in ZONES}
@@ -318,6 +322,11 @@ ATTRIBUTION = ("Contains information licensed under the Open Government Licence 
                "contributors. Based on FireSmart BC guidance; not an official FireSmart assessment.")
 
 
+def _rings_ll(polys, to_ll) -> list:
+    """Rectangles as lon/lat rings (for the rectangle editor)."""
+    return [[[round(x, 8), round(y, 8)] for x, y in (to_ll(*c) for c in p.exterior.coords)] for p in polys]
+
+
 def _ortho_or_note(tiles, bounds, out, progress, notes):
     ortho = None
     if tiles:
@@ -342,16 +351,20 @@ def _outline_needed(pid, out, summary_path, lat, lng, epsg, to_ll, parcel, bld_u
                "properties": {**f["properties"], "home": False,
                               "dist_to_home_m": round(g.distance(click_u), 1)}}
               for f, g in bld_u if g.distance(click_u) <= ZONES[-1][3]]
-    suggestion = fp_hint
-    sugg_src = "Microsoft footprint (unverified)" if fp_hint is not None else "starter square"
-    if suggestion is None:
+    if fp_hint is not None:   # footprints are rectangularised too, so every outline is rectilinear
+        fitted = rects.fit(fp_hint)
+        suggestion, sugg_rects = fitted["polygon"], fitted["rects"]
+        sugg_src = f"Microsoft footprint as {fitted['shape']} (unverified)"
+    else:
         suggestion = box(click_u.x - 5, click_u.y - 5, click_u.x + 5, click_u.y + 5)
+        sugg_rects, sugg_src = [suggestion], "starter square"
     ortho = _ortho_or_note(tiles, click_u.buffer(ZONES[-1][3] + 5).bounds, out, progress, notes)
     _write(out / "parcel.geojson", _fc([parcel]))
     _write(out / "buildings.geojson", _fc(bfeats))
     _write(out / "outline.geojson", _fc([{"type": "Feature",
                                           "geometry": mapping(shp_transform(to_ll, suggestion)),
-                                          "properties": {"source": sugg_src, "suggested": True}}]))
+                                          "properties": {"source": sugg_src, "suggested": True,
+                                                         "rects": _rings_ll(sugg_rects, to_ll)}}]))
     summary = {
         "pipeline_version": PIPELINE_VERSION, "status": "outline_needed", "id": pid,
         "click": {"lat": lat, "lng": lng}, "crs": f"EPSG:{epsg}", "parcel": parcel["properties"],

@@ -8,8 +8,8 @@ Primary method for the home outline. Building footprint datasets are used only a
    (canopy splits a pulse into several returns).
 3. Roof points -> 0.5 m mask -> clean up -> the connected patch under the click (or the nearest
    patch within `snap_m` if the click is just off the edge).
-4. Trace the patch, find its dominant orientation, and regularise to orthogonal edges, which
-   keeps real L-shapes and attached garages.
+4. Trace the patch, find its dominant orientation, and fit straight-edged rectangles along it:
+   one rectangle, or a union of 2-3 for L/T shapes and attached garages (pipeline/rects.py).
 """
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ from rasterio import features as rfeatures
 from rasterio.transform import from_origin, rowcol
 from scipy import ndimage
 from scipy.spatial import cKDTree
+
+from . import rects
 from shapely import affinity
 from shapely.geometry import Point, Polygon, shape
 
@@ -152,11 +154,11 @@ def trace_roof(pts: dict, dtm, dtm_transform, click_xy: tuple[float, float],
     if raw.is_empty or raw.geom_type != "Polygon":
         return None
     angle = _dominant_angle(comp)
-    reg = _orthogonalise(raw, angle)
-    reg_iou = reg.intersection(raw).area / reg.union(raw).area if reg is not None else 0.0
+    ortho = _orthogonalise(raw, angle)   # rectilinear sketch: its corners seed the rectangle fit
+    fitted = rects.fit(raw, angle, hint_rectilinear=ortho)
+    reg = fitted["polygon"]
+    reg_iou = reg.intersection(raw).area / reg.union(raw).area
     method = "lidar_roof_trace"
-    if reg is None or reg_iou < 0.75:
-        reg, method = raw.simplify(0.4), "lidar_roof_trace (unregularised)"
 
     inside = np.array([reg.contains(Point(x, y)) for x, y in xyz[:, :2]]) if len(xyz) < 60000 else None
     n_roof_in = int(np.sum(is_roof & inside)) if inside is not None else int(is_roof.sum())
@@ -171,6 +173,7 @@ def trace_roof(pts: dict, dtm, dtm_transform, click_xy: tuple[float, float],
     return {
         "polygon": reg, "method": method, "points": n_roof_in, "area_m2": round(reg.area, 1),
         "orientation_deg": round(angle, 1), "regularisation_iou": round(reg_iou, 2),
+        "shape": fitted["shape"], "rect_fill": fitted["fill"], "rects": fitted["rects"],
         "roof_point_share": round(planar_share, 2), "roof_density_pts_m2": round(density, 1),
         "confidence": round(conf, 2),
         "confidence_label": "high" if conf >= 0.8 else "medium" if conf >= 0.6 else "low",

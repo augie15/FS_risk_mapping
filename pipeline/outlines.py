@@ -40,23 +40,21 @@ def find(pid: str, lng: float, lat: float) -> dict | None:
     return None
 
 
-def save(pid: str, coords_lnglat: list[list[float]], lng: float, lat: float, note: str | None = None) -> dict:
-    """Store an operator-confirmed outline (lon/lat ring), replacing the property's previous one."""
-    ring = [list(map(float, c[:2])) for c in coords_lnglat]
-    if ring[0] != ring[-1]:
-        ring.append(ring[0])
-    geom = {"type": "Polygon", "coordinates": [ring]}
-    poly = shape(geom)
-    if len(ring) < 4 or not poly.is_valid or poly.area == 0:
-        raise ValueError("Outline must be a simple polygon with at least 3 corners")
+def save(pid: str, geometry_ll: dict, rect_rings_ll: list, lng: float, lat: float,
+         note: str | None = None) -> dict:
+    """Store an operator-confirmed outline (lon/lat polygon + its rectangles), replacing the old one."""
+    poly = shape(geometry_ll)
+    if poly.geom_type != "Polygon" or not poly.is_valid or poly.area == 0:
+        raise ValueError("Outline must be one valid polygon")
     with _lock:
         rows = _load()
         old = find(pid, lng, lat)
         ids = sorted(set(old["property_ids"] + [pid])) if old else [pid]
-        rows = [r for r in rows if r is not old and not (old and r["id"] == old["id"])]
+        rows = [r for r in rows if not (old and r["id"] == old["id"])]
         rec = {"id": old["id"] if old else f"o{int(time.time() * 1000)}", "property_ids": ids,
-               "geometry": mapping(poly), "confirmed": True, "source": "operator-confirmed",
-               "note": note, "updated": time.strftime("%Y-%m-%dT%H:%M:%S")}
+               "geometry": mapping(poly), "rects": rect_rings_ll, "confirmed": True,
+               "source": "operator-confirmed", "note": note,
+               "updated": time.strftime("%Y-%m-%dT%H:%M:%S")}
         rows.append(rec)
         _save(rows)
     return rec

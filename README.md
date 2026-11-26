@@ -26,13 +26,16 @@ Tests (offline, synthetic data): `.venv/bin/pip install pytest && .venv/bin/pyth
 
 1. **Parcel** from ParcelMap BC (WFS), the polygon containing the clicked point.
 2. **Home outline**, in this order:
-   - an **operator-confirmed** outline, if one was saved for this house (edit it on the map:
-     drag corners, drag midpoints to add corners, right-click to remove; stored in
-     `data/outlines.json`, git-ignored);
+   - an **operator-confirmed** outline, if one was saved for this house. Edit it on the map as
+     rectangles: corner and edge squares resize, the diamond moves (and selects) a rectangle, the
+     yellow dot rotates the outline; add or remove rectangles for L-shapes and garages. Stored in
+     `data/outlines.json` (git-ignored);
    - otherwise a **LiDAR roof trace** at the click (`pipeline/roof.py`): raised points that are
-     locally planar and single-return, the roof patch under the click, orthogonal edges along the
-     roof's dominant direction. Reported with point count and a confidence. Microsoft footprints
-     are only a cross-check (overlap %), never the outline;
+     locally planar and single-return, the roof patch under the click. Reported with point count
+     and a confidence. Microsoft footprints are only a cross-check (overlap %), never the outline;
+   - every outline is **rectilinear** (`pipeline/rects.py`): one rectangle along the roof's
+     dominant direction, or a union of 2-3 same-orientation rectangles when one rectangle would be
+     less than ~80% roof (L/T shapes, attached garages). Footprint suggestions are fitted the same way;
    - otherwise **"Outline needed"**: no zones or trees are computed until you draw and save one.
 3. **Home Ignition Zones** buffered from the home outline: Immediate 0–1.5 m,
    Intermediate 1.5–10 m, Extended 10–30 m, and 30–100 m. Not clipped to the parcel.

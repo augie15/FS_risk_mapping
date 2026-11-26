@@ -38,5 +38,7 @@ main { flex: 1; display: flex; min-height: 0; }
 .outline-actions { margin-top: .4rem; flex-wrap: wrap; }
 button.linkish { background: none; border: 0; padding: 0; margin-top: .4rem; color: #2a5d8f; text-decoration: underline; cursor: pointer; font-size: .82rem; }
 .vtx { background: #fff; border: 2px solid #00b8d4; border-radius: 2px; box-sizing: border-box; }
-.vtx.mid { background: #00e5ff; opacity: .7; border-radius: 50%; transform: scale(.75); }
+.vtx-edge { transform: scale(.8); }
+.vtx-move { transform: rotate(45deg); background: #e0fbff; }
+.vtx-rotate { background: #ffd400; border-color: #7a6400; border-radius: 50%; }
 #aiStatus.note { margin: .3rem 0; }

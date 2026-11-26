@@ -166,6 +166,7 @@ async function renderOutline(id, summary) {
     rows.push(`<table>
       <tr><td>Source</td><td>${esc(o.source)}</td></tr>
       <tr><td>Confidence</td><td>${esc(conf)}</td></tr>
+      ${o.shape ? `<tr><td>Shape</td><td>${esc(o.shape)} (${Math.round((o.regularisation_iou ?? 0) * 100)}% match to roof)</td></tr>` : ""}
       ${o.points ? `<tr><td>Roof points</td><td>${o.points.toLocaleString()} (${o.roof_density_pts_m2}/m²)</td></tr>` : ""}
       <tr><td>Area</td><td>${summary.home.area_m2} m²</td></tr>
       ${o.footprint_iou != null ? `<tr><td>Overlap with Microsoft footprint</td><td>${Math.round(o.footprint_iou * 100)}%</td></tr>` : ""}
@@ -181,12 +182,134 @@ function setEditButtons(on) {
   ob("outlineSave").hidden = !on;
   ob("outlineCancel").hidden = !on; // always offer a way out, so other houses can be clicked
   ob("outlineHelp").hidden = !on;
+  ob("rectAdd").hidden = !on;
+  ob("rectRemove").hidden = !on;
+}
+
+// Rectangle editor. All rectangles share one orientation; every edge stays straight and every
+// corner 90 degrees. Corners resize (opposite corner fixed), edge squares move one side, the
+// diamond moves a rectangle (click it to select), the yellow dot rotates the whole outline.
+function makeRectEditor(rings) {
+  const lat0 = rings[0][0][1], lng0 = rings[0][0][0];
+  const kx = 111320 * Math.cos((lat0 * Math.PI) / 180), ky = 110540;
+  const toXY = ([lng, lat]) => [(lng - lng0) * kx, (lat - lat0) * ky];
+  const toLL = ([x, y]) => [lng0 + x / kx, lat0 + y / ky];
+  const rot = ([x, y], t) => [x * Math.cos(t) - y * Math.sin(t), x * Math.sin(t) + y * Math.cos(t)];
+  const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+
+  // Rings -> {c, w, h} in a shared frame rotated by theta.
+  const r0 = rings[0].slice(0, 4).map(toXY);
+  let theta = Math.atan2(r0[1][1] - r0[0][1], r0[1][0] - r0[0][0]);
+  let rects = rings.map((ring) => {
+    const loc = ring.slice(0, 4).map(toXY).map((p) => rot(p, -theta));
+    const xs = loc.map((p) => p[0]), ys = loc.map((p) => p[1]);
+    const lo = [Math.min(...xs), Math.min(...ys)], hi = [Math.max(...xs), Math.max(...ys)];
+    return { c: rot([(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2], theta), w: hi[0] - lo[0], h: hi[1] - lo[1] };
+  });
+  let selected = rects.length - 1;
+  const MIN = 1.0;
+  const corners = (r) => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) =>
+    add(r.c, rot([(sx * r.w) / 2, (sy * r.h) / 2], theta)));
+  let polys = [], handles = [];
+
+  function group() {
+    const all = rects.flatMap(corners);
+    const c = [all.reduce((a, p) => a + p[0], 0) / all.length, all.reduce((a, p) => a + p[1], 0) / all.length];
+    const reach = Math.max(...all.map((p) => Math.hypot(p[0] - c[0], p[1] - c[1])));
+    return { c, reach };
+  }
+
+  function drawPolys() {
+    polys.forEach((p) => p.remove());
+    polys = rects.map((r, i) => map.drawPolygon(corners(r).map(toLL),
+      { stroke: i === selected ? "#00e5ff" : "#7fdfff", weight: i === selected ? 3 : 2, fill: "#00e5ff", fillOpacity: 0.15 }));
+  }
+
+  function render() {
+    handles.forEach((h) => h.remove());
+    handles = [];
+    drawPolys();
+    rects.forEach((r, i) => {
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy]) => {
+        const pos = add(r.c, rot([(sx * r.w) / 2, (sy * r.h) / 2], theta));
+        handles.push(map.handle(toLL(pos), "corner", { drag: (ll) => {
+          const opp = add(r.c, rot([(-sx * r.w) / 2, (-sy * r.h) / 2], theta));
+          const d = rot(sub(toXY(ll), opp), -theta);
+          // a corner cannot cross its opposite corner (no flipping)
+          const nx = sx * Math.max(MIN, sx * d[0]);
+          const ny = sy * Math.max(MIN, sy * d[1]);
+          r.w = Math.abs(nx); r.h = Math.abs(ny);
+          r.c = add(opp, rot([nx / 2, ny / 2], theta));
+          drawPolys();
+        }, end: render }));
+      });
+      [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([sx, sy]) => {
+        const pos = add(r.c, rot([(sx * r.w) / 2, (sy * r.h) / 2], theta));
+        handles.push(map.handle(toLL(pos), "edge", { drag: (ll) => {
+          const local = rot(sub(toXY(ll), r.c), -theta);
+          if (sx) {
+            const x0 = (-sx * r.w) / 2, x1 = sx * Math.max(MIN, sx * (local[0] - x0)) + x0;
+            r.w = Math.abs(x1 - x0); r.c = add(r.c, rot([(x0 + x1) / 2, 0], theta));
+          } else {
+            const y0 = (-sy * r.h) / 2, y1 = sy * Math.max(MIN, sy * (local[1] - y0)) + y0;
+            r.h = Math.abs(y1 - y0); r.c = add(r.c, rot([0, (y0 + y1) / 2], theta));
+          }
+          drawPolys();
+        }, end: render }));
+      });
+      handles.push(map.handle(toLL(r.c), "move", {
+        drag: (ll) => { r.c = toXY(ll); drawPolys(); },
+        end: () => { selected = i; render(); },
+        click: () => { selected = i; render(); },
+      }));
+    });
+    const g = group();
+    let start = null;
+    handles.push(map.handle(toLL(add(g.c, rot([0, g.reach + 3], theta))), "rotate", {
+      drag: (ll) => {
+        const v = sub(toXY(ll), g.c);
+        const a = Math.atan2(v[1], v[0]) - Math.PI / 2;
+        // the handle starts at angle theta, so measure the turn from there (a quick drag may fire once)
+        if (start === null) start = { a: theta, theta, rects: rects.map((r) => ({ ...r })) };
+        const dt = a - start.a;
+        theta = start.theta + dt;
+        rects = start.rects.map((r) => ({ ...r, c: add(g.c, rot(sub(r.c, g.c), dt)) }));
+        drawPolys();
+      },
+      end: () => { start = null; render(); },
+    }));
+  }
+
+  render();
+  return {
+    rings: () => rects.map((r) => { const cs = corners(r).map(toLL); return [...cs, cs[0]]; }),
+    count: () => rects.length,
+    addRect() {
+      const s = rects[selected];
+      const w = Math.max(3, s.w / 2), h = Math.max(3, s.h / 2);
+      // attach to the selected rectangle's right side with 0.5 m overlap so the outline stays one piece
+      rects.push({ c: add(s.c, rot([s.w / 2 + w / 2 - 0.5, -(s.h - h) / 2], theta)), w, h });
+      selected = rects.length - 1;
+      render();
+    },
+    removeRect() {
+      if (rects.length < 2) return false;
+      rects.splice(selected, 1);
+      selected = rects.length - 1;
+      render();
+      return true;
+    },
+    remove() { handles.forEach((h) => h.remove()); polys.forEach((p) => p.remove()); },
+  };
 }
 
 function startEditing() {
   if (!outlineFeature) return;
   stopEditing();
-  editor = map.editPolygon(outlineFeature.geometry.coordinates[0].slice(0, -1));
+  const rings = outlineFeature.properties.rects?.length ? outlineFeature.properties.rects
+    : [outlineFeature.geometry.coordinates[0]];
+  editor = makeRectEditor(rings);
   layers.buildings?.show(false); // the static home shape would sit under the editable one
   setEditButtons(true);
 }
@@ -200,11 +323,9 @@ function stopEditing() {
 
 async function saveOutline() {
   if (!editor || !current) return;
-  const coords = editor.getPath();
-  if (coords.length < 3) { statusEl.textContent = "An outline needs at least 3 corners"; return; }
   statusEl.textContent = "Saving outline…";
   const r = await fetch(`/api/property/${current.id}/outline`, { method: "POST",
-    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ coordinates: coords }) });
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rects: editor.rings() }) });
   if (!r.ok) { statusEl.textContent = `Error: ${JSON.stringify((await r.json()).detail)}`; return; }
   stopEditing();
   await pollAssessment(current.id);
@@ -221,6 +342,10 @@ ob("outlineEdit").addEventListener("click", startEditing);
 ob("outlineCancel").addEventListener("click", stopEditing);
 ob("outlineSave").addEventListener("click", saveOutline);
 ob("outlineRevert").addEventListener("click", revertOutline);
+ob("rectAdd").addEventListener("click", () => editor?.addRect());
+ob("rectRemove").addEventListener("click", () => {
+  if (editor && !editor.removeRect()) statusEl.textContent = "An outline needs at least one rectangle";
+});
 
 const aiEl = document.getElementById("ai");
 const aiBackendEl = document.getElementById("aiBackend");
@@ -361,16 +486,23 @@ async function googleAdapter(cfg) {
       o.setMap(gmap);
       return { show: (v) => o.setMap(v ? gmap : null), remove: () => o.setMap(null), restyle() {} };
     },
-    editPolygon(lnglats) {
-      const poly = new google.maps.Polygon({ map: gmap, editable: true, zIndex: 2000,
-        paths: lnglats.map(([lng, lat]) => ({ lat, lng })),
-        strokeColor: "#00e5ff", strokeWeight: 3, fillColor: "#00e5ff", fillOpacity: 0.15 });
-      poly.addListener("rightclick", (e) => {
-        const path = poly.getPath();
-        if (e.vertex != null && path.getLength() > 3) path.removeAt(e.vertex);
-      });
-      return { getPath: () => poly.getPath().getArray().map((ll) => [ll.lng(), ll.lat()]),
-        remove: () => poly.setMap(null) };
+    drawPolygon(lnglats, st) {
+      const p = new google.maps.Polygon({ map: gmap, clickable: false, zIndex: 1900,
+        paths: lnglats.map(([lng, lat]) => ({ lat, lng })), strokeColor: st.stroke, strokeWeight: st.weight,
+        fillColor: st.fill, fillOpacity: st.fillOpacity });
+      return { set: (ll) => p.setPaths(ll.map(([lng, lat]) => ({ lat, lng }))), remove: () => p.setMap(null) };
+    },
+    handle([lng, lat], kind, cb) {
+      const shapes = { corner: "M-5-5H5V5H-5Z", edge: "M-4-4H4V4H-4Z", move: "M0-7L7 0L0 7L-7 0Z",
+        rotate: google.maps.SymbolPath.CIRCLE };
+      const m = new google.maps.Marker({ map: gmap, position: { lat, lng }, draggable: true, zIndex: 3000,
+        cursor: kind === "move" ? "move" : "pointer",
+        icon: { path: shapes[kind], scale: kind === "rotate" ? 6 : 1, fillColor: kind === "rotate" ? "#ffd400" : "#ffffff",
+          fillOpacity: 1, strokeColor: "#007c91", strokeWeight: 2 } });
+      m.addListener("drag", (e) => cb.drag?.([e.latLng.lng(), e.latLng.lat()]));
+      m.addListener("dragend", () => cb.end?.());
+      m.addListener("click", () => cb.click?.());
+      return { set: ([x, y]) => m.setPosition({ lat: y, lng: x }), remove: () => m.setMap(null) };
     },
     addGeoJSON(fc, style, popup, { interactive = true } = {}) {
       const d = new Data({ map: gmap });
@@ -421,31 +553,18 @@ async function leafletAdapter() {
       const o = L.imageOverlay(url, [[b.south, b.west], [b.north, b.east]], { interactive: false }).addTo(lmap);
       return { show: (v) => (v ? o.addTo(lmap) : o.remove()), remove: () => o.remove(), restyle() {} };
     },
-    editPolygon(lnglats) {
-      // Small vertex editor: drag corners, drag a midpoint to add a corner, right-click to remove.
-      let pts = lnglats.map(([lng, lat]) => L.latLng(lat, lng));
-      const poly = L.polygon(pts, { color: "#00e5ff", weight: 3, fillOpacity: 0.15, interactive: false }).addTo(lmap);
-      const handles = L.layerGroup().addTo(lmap);
-      const icon = (cls) => L.divIcon({ className: cls, iconSize: [12, 12] });
-      const redraw = () => {
-        poly.setLatLngs(pts);
-        handles.clearLayers();
-        pts.forEach((p, i) => {
-          const m = L.marker(p, { draggable: true, icon: icon("vtx"), bubblingMouseEvents: false }).addTo(handles);
-          m.on("drag", (e) => { pts[i] = e.target.getLatLng(); poly.setLatLngs(pts); });
-          m.on("dragend", redraw);
-          m.on("contextmenu", () => { if (pts.length > 3) { pts.splice(i, 1); redraw(); } });
-          const q = pts[(i + 1) % pts.length];
-          const mid = L.latLng((p.lat + q.lat) / 2, (p.lng + q.lng) / 2);
-          const mm = L.marker(mid, { draggable: true, icon: icon("vtx mid"), bubblingMouseEvents: false }).addTo(handles);
-          mm.on("dragstart", () => pts.splice(i + 1, 0, mid));
-          mm.on("drag", (e) => { pts[i + 1] = e.target.getLatLng(); poly.setLatLngs(pts); });
-          mm.on("dragend", redraw);
-        });
-      };
-      redraw();
-      return { getPath: () => pts.map((p) => [p.lng, p.lat]),
-        remove: () => { poly.remove(); handles.remove(); } };
+    drawPolygon(lnglats, st) {
+      const p = L.polygon(lnglats.map(([lng, lat]) => [lat, lng]), { color: st.stroke, weight: st.weight,
+        fillColor: st.fill, fillOpacity: st.fillOpacity, interactive: false }).addTo(lmap);
+      return { set: (ll) => p.setLatLngs(ll.map(([lng, lat]) => [lat, lng])), remove: () => p.remove() };
+    },
+    handle([lng, lat], kind, cb) {
+      const m = L.marker([lat, lng], { draggable: true, bubblingMouseEvents: false, zIndexOffset: 3000,
+        icon: L.divIcon({ className: `vtx vtx-${kind}`, iconSize: [12, 12] }) }).addTo(lmap);
+      m.on("drag", (e) => { const p = e.target.getLatLng(); cb.drag?.([p.lng, p.lat]); });
+      m.on("dragend", () => cb.end?.());
+      m.on("click", () => cb.click?.());
+      return { set: ([x, y]) => m.setLatLng([y, x]), remove: () => m.remove() };
     },
     addGeoJSON(fc, style, popup, { interactive = true } = {}) {
       const toLeaflet = (s) => ({ color: s.stroke, weight: s.weight, fillColor: s.fill, fillOpacity: s.fillOpacity,

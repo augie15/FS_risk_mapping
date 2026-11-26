@@ -12,7 +12,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import pyproj
+from shapely.geometry import mapping
+from shapely.ops import transform as shp_transform
+
 from pipeline import outlines
+from pipeline import rects as ai_rects
 from pipeline.property import PROCESSED, assess, property_id
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -84,7 +89,8 @@ def _start(pid: str, req: "AssessRequest") -> dict:
 
 
 class OutlineRequest(BaseModel):
-    coordinates: list[list[float]] = Field(min_length=3, max_length=500)  # [[lng, lat], ...]
+    # Rectangles as lon/lat rings: [[[lng, lat] x 4-5] per rectangle]
+    rects: list[list[list[float]]] = Field(min_length=1, max_length=6)
     note: str | None = Field(default=None, max_length=300)
 
 
@@ -108,8 +114,14 @@ def save_outline(pid: str, req: OutlineRequest) -> dict:
     """Save an operator-confirmed home outline and recompute the property from it."""
     s = _summary(pid)
     click = s["click"]
+    epsg = int(s["crs"].split(":")[1])
+    to_u = pyproj.Transformer.from_crs(4326, epsg, always_xy=True).transform
+    to_ll = pyproj.Transformer.from_crs(epsg, 4326, always_xy=True).transform
     try:
-        outlines.save(pid, req.coordinates, click["lng"], click["lat"], req.note)
+        if any(len(r) not in (4, 5) for r in req.rects):
+            raise ValueError("each rectangle needs 4 corners")
+        union_u = ai_rects.union_of([[to_u(*c[:2]) for c in r] for r in req.rects])
+        outlines.save(pid, mapping(shp_transform(to_ll, union_u)), req.rects, click["lng"], click["lat"], req.note)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return _start(pid, AssessRequest(lat=click["lat"], lng=click["lng"], force=True))

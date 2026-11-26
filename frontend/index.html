@@ -41,9 +41,14 @@
           <button id="outlineSave" type="button" hidden>Save outline</button>
           <button id="outlineCancel" type="button" hidden>Cancel</button>
         </div>
-        <p id="outlineHelp" class="hint" hidden>Drag corners to move them; drag a midpoint to add a
-          corner; right-click a corner to remove it. Saving marks the outline operator-confirmed and
-          recomputes zones, tree distances and AI inputs from it.</p>
+        <div class="ai-row outline-actions">
+          <button id="rectAdd" type="button" hidden>Add rectangle</button>
+          <button id="rectRemove" type="button" hidden>Remove selected</button>
+        </div>
+        <p id="outlineHelp" class="hint" hidden>White squares resize (corners keep the opposite corner
+          fixed); the diamond moves a rectangle and selects it; the yellow dot rotates the whole
+          outline. Add a rectangle for an L-shape or garage. Saving marks the outline
+          operator-confirmed and recomputes zones, tree distances and AI inputs.</p>
         <button id="outlineRevert" type="button" class="linkish" hidden>Go back to the automatic LiDAR outline</button>
       </section>
       <section id="summary" hidden></section>
