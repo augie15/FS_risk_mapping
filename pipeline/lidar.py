@@ -24,9 +24,9 @@ MIN_CROWN_SEP = 2.0  # m, minimum spacing between tree tops
 
 
 def read_points(paths: list[Path], bounds: tuple[float, float, float, float]) -> dict[str, np.ndarray]:
-    """x, y, z, classification of all points inside bounds (tile CRS), across tiles."""
+    """x, y, z, classification and number of returns of all points inside bounds (tile CRS)."""
     minx, miny, maxx, maxy = bounds
-    xs, ys, zs, cs = [], [], [], []
+    xs, ys, zs, cs, ns = [], [], [], [], []
     for p in paths:
         with laspy.open(p) as fh:
             hb = fh.header
@@ -39,10 +39,19 @@ def read_points(paths: list[Path], bounds: tuple[float, float, float, float]) ->
                     continue
                 xs.append(x[m]); ys.append(y[m])
                 zs.append(np.asarray(pts.z)[m]); cs.append(np.asarray(pts.classification)[m])
+                ns.append(np.asarray(pts.number_of_returns)[m])
     if not xs:
-        return {"x": np.empty(0), "y": np.empty(0), "z": np.empty(0), "c": np.empty(0, np.uint8)}
+        return {"x": np.empty(0), "y": np.empty(0), "z": np.empty(0), "c": np.empty(0, np.uint8),
+                "nr": np.empty(0, np.uint8)}
     return {"x": np.concatenate(xs), "y": np.concatenate(ys),
-            "z": np.concatenate(zs), "c": np.concatenate(cs)}
+            "z": np.concatenate(zs), "c": np.concatenate(cs), "nr": np.concatenate(ns)}
+
+
+def subset(pts: dict[str, np.ndarray], bounds) -> dict[str, np.ndarray]:
+    """Points inside bounds (normalized_dsm clamps outside points to the edge, so subset first)."""
+    minx, miny, maxx, maxy = bounds
+    m = (pts["x"] >= minx) & (pts["x"] <= maxx) & (pts["y"] >= miny) & (pts["y"] <= maxy)
+    return {k: v[m] for k, v in pts.items()}
 
 
 def normalized_dsm(pts: dict[str, np.ndarray], bounds, return_dtm: bool = False):

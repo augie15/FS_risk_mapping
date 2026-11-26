@@ -25,8 +25,15 @@ Tests (offline, synthetic data): `.venv/bin/pip install pytest && .venv/bin/pyth
 ## What the pipeline does
 
 1. **Parcel** from ParcelMap BC (WFS), the polygon containing the clicked point.
-2. **Home** from Microsoft building footprints (OSM fallback; a 12 x 12 m box if none), then
-   snapped to the roof seen in the LiDAR, because ML footprints are often a few metres off.
+2. **Home outline**, in this order:
+   - an **operator-confirmed** outline, if one was saved for this house (edit it on the map:
+     drag corners, drag midpoints to add corners, right-click to remove; stored in
+     `data/outlines.json`, git-ignored);
+   - otherwise a **LiDAR roof trace** at the click (`pipeline/roof.py`): raised points that are
+     locally planar and single-return, the roof patch under the click, orthogonal edges along the
+     roof's dominant direction. Reported with point count and a confidence. Microsoft footprints
+     are only a cross-check (overlap %), never the outline;
+   - otherwise **"Outline needed"**: no zones or trees are computed until you draw and save one.
 3. **Home Ignition Zones** buffered from the home outline: Immediate 0–1.5 m,
    Intermediate 1.5–10 m, Extended 10–30 m, and 30–100 m. Not clipped to the parcel.
 4. **Orthophoto**: the matching LidarBC 2019 15 cm tile(s), read as a window over HTTP and
@@ -69,6 +76,8 @@ FS_AI_RUN_CAP_USD=0.50
   you get parcel and zones only, or older LiDAR without an orthophoto.
 - LiDAR tiles are not cloud-optimised: the first run in a new area downloads whole tiles
   (200–650 MB each, up to 4 at a tile corner) into `data/raw/lidar/`.
+- Roof traces follow the LiDAR roof, which is the true position; the 2019 photos lean, so roofs
+  in the image can look 1-3 m off. Check low-confidence traces and save a corrected outline.
 - Trees under 3 m (shrubs) are not counted. Points next to a house can still be eaves,
   chimneys or attached decks; check them against the orthophoto.
 - Orthophotos are not true-ortho, so tall trees lean in the image relative to LiDAR positions.

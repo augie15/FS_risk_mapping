@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from pipeline import outlines
 from pipeline.property import PROCESSED, assess, property_id
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,7 +28,7 @@ app = FastAPI(title="FS Risk Mapping")
 # In-memory job table. One prototype user, one process: no queue needed.
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
-LAYERS = {"parcel", "buildings", "zones", "trees"}
+LAYERS = {"parcel", "buildings", "zones", "trees", "outline"}
 ID_RE = re.compile(r"^[0-9a-f]{12}$")
 
 
@@ -51,7 +52,7 @@ class AssessRequest(BaseModel):
     force: bool = False
 
 
-def _run(pid: str, req: AssessRequest) -> None:
+def _run(pid: str, req: "AssessRequest") -> None:
     def progress(msg: str) -> None:
         with _lock:
             _jobs[pid]["message"] = msg
@@ -69,7 +70,10 @@ def _run(pid: str, req: AssessRequest) -> None:
 @app.post("/api/assess")
 def start_assessment(req: AssessRequest) -> dict:
     """Start (or reuse) the one-property pipeline. Poll GET /api/assess/{id}."""
-    pid = property_id(req.lat, req.lng)
+    return _start(property_id(req.lat, req.lng), req)
+
+
+def _start(pid: str, req: "AssessRequest") -> dict:
     with _lock:
         job = _jobs.get(pid)
         if job and job["status"] == "running":
@@ -77,6 +81,48 @@ def start_assessment(req: AssessRequest) -> dict:
         _jobs[pid] = {"status": "running", "message": "Queued", "summary": None}
     threading.Thread(target=_run, args=(pid, req), daemon=True).start()
     return {"id": pid, "status": "running", "message": "Queued"}
+
+
+class OutlineRequest(BaseModel):
+    coordinates: list[list[float]] = Field(min_length=3, max_length=500)  # [[lng, lat], ...]
+    note: str | None = Field(default=None, max_length=300)
+
+
+def _summary(pid: str) -> dict:
+    path = _check_id(pid) / "summary.json"
+    if not path.exists():
+        raise HTTPException(404, "unknown property")
+    return json.loads(path.read_text())
+
+
+@app.get("/api/property/{pid}/outline.geojson")
+def property_outline(pid: str):
+    out = _check_id(pid)
+    if not (out / "outline.geojson").exists():
+        raise HTTPException(404, "no outline")
+    return FileResponse(out / "outline.geojson", media_type="application/geo+json")
+
+
+@app.post("/api/property/{pid}/outline")
+def save_outline(pid: str, req: OutlineRequest) -> dict:
+    """Save an operator-confirmed home outline and recompute the property from it."""
+    s = _summary(pid)
+    click = s["click"]
+    try:
+        outlines.save(pid, req.coordinates, click["lng"], click["lat"], req.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _start(pid, AssessRequest(lat=click["lat"], lng=click["lng"], force=True))
+
+
+@app.delete("/api/property/{pid}/outline")
+def clear_outline(pid: str) -> dict:
+    """Drop the confirmed outline and go back to the automatic LiDAR trace."""
+    s = _summary(pid)
+    click = s["click"]
+    if not outlines.delete(pid, click["lng"], click["lat"]):
+        raise HTTPException(404, "no confirmed outline for this property")
+    return _start(pid, AssessRequest(lat=click["lat"], lng=click["lng"], force=True))
 
 
 def _public(job: dict) -> dict:
@@ -166,6 +212,8 @@ def ai_run(req: AIRunRequest) -> dict:
         raise HTTPException(400, "unknown backend")
     if not (out / "summary.json").exists():
         raise HTTPException(404, "run the property assessment first")
+    if json.loads((out / "summary.json").read_text()).get("status") == "outline_needed":
+        raise HTTPException(409, "outline needed: draw and save the home outline first")
     ok, why = ai_backends.get(req.backend).available()
     if not ok:
         raise HTTPException(409, why)
@@ -216,6 +264,8 @@ def properties() -> list[dict]:
     rows = []
     for d in sorted(PROCESSED.glob("*/summary.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         s = json.loads(d.read_text())
+        if s.get("status") == "outline_needed":
+            continue  # nothing to compare until an outline is confirmed
         rows.append({"id": s["id"], "trees": s["trees"]["count"], "home": s["home"]["source"],
                      "ai": [b for b in BACKENDS if (d.parent / "ai" / f"{b}.json").exists()]})
     return rows

@@ -95,6 +95,10 @@ async function assess(lat, lng) {
   });
   if (!r.ok) { statusEl.textContent = `Error: ${(await r.json()).detail?.[0]?.msg || r.status}`; return; }
   const { id } = await r.json();
+  return pollAssessment(id);
+}
+
+async function pollAssessment(id) {
   for (;;) {
     const s = await (await fetch(`/api/assess/${id}`)).json();
     statusEl.textContent = s.message;
@@ -108,12 +112,14 @@ async function show(id, summary) {
   for (const h of Object.values(layers)) h?.remove(); // a slot can be empty (no findings yet)
   layers = {};
   current = { id, summary };
+  stopEditing();
   if (summary.ortho) {
     layers.ortho = map.addImage(`/api/property/${id}/ortho.png`, summary.ortho);
   }
+  const needed = summary.status === "outline_needed";
   // Order matters for click targets: zones under parcel under buildings under trees.
   let extent = null;
-  for (const name of ["zones", "parcel", "buildings", "trees"]) {
+  for (const name of needed ? ["parcel", "buildings"] : ["zones", "parcel", "buildings", "trees"]) {
     const fc = await (await fetch(`/api/property/${id}/${name}.geojson`)).json();
     if (name === "zones") extent = bboxOf(fc);
     // Only trees keep pop-ups; zones, parcel and buildings pass clicks through so any house,
@@ -123,11 +129,98 @@ async function show(id, summary) {
   }
   applyToggles();
   if (extent) map.fitBounds(extent);
+  else if (summary.ortho) map.fitBounds(summary.ortho);
+  history.replaceState(null, "", `?id=${id}`);
+  await renderOutline(id, summary);
+  if (needed) {
+    summaryEl.hidden = true;
+    aiEl.hidden = true;
+    statusEl.textContent = "Outline needed: adjust the cyan outline to the roof, then Save";
+    startEditing();
+    return;
+  }
   renderSummary(summary);
   statusEl.textContent = `Done in ${summary.elapsed_s}s`;
-  history.replaceState(null, "", `?id=${id}`);
   await loadFindings(id);
 }
+
+// ---------------------------------------------------------------- home outline editing
+
+const outlineEl = document.getElementById("outline");
+const ob = (id) => document.getElementById(id);
+let editor = null;       // active polygon editor
+let outlineFeature = null;
+
+async function renderOutline(id, summary) {
+  outlineEl.hidden = false;
+  const r = await fetch(`/api/property/${id}/outline.geojson`);
+  outlineFeature = r.ok ? (await r.json()).features[0] : null;
+  const o = summary.home?.outline;
+  const rows = [];
+  if (summary.status === "outline_needed") {
+    rows.push(`<div class="note">${esc(summary.notes[0])}</div>`);
+    rows.push(`<p class="hint">Starting shape: ${esc(outlineFeature?.properties.source || "none")}. It is not used until you save.</p>`);
+  } else if (o) {
+    const conf = o.confidence_label === "confirmed" ? "operator-confirmed"
+      : `${o.confidence_label} confidence (${Math.round(o.confidence * 100)}%)`;
+    rows.push(`<table>
+      <tr><td>Source</td><td>${esc(o.source)}</td></tr>
+      <tr><td>Confidence</td><td>${esc(conf)}</td></tr>
+      ${o.points ? `<tr><td>Roof points</td><td>${o.points.toLocaleString()} (${o.roof_density_pts_m2}/m²)</td></tr>` : ""}
+      <tr><td>Area</td><td>${summary.home.area_m2} m²</td></tr>
+      ${o.footprint_iou != null ? `<tr><td>Overlap with Microsoft footprint</td><td>${Math.round(o.footprint_iou * 100)}%</td></tr>` : ""}
+    </table>`);
+  }
+  ob("outlineInfo").innerHTML = rows.join("");
+  ob("outlineRevert").hidden = o?.source !== "operator-confirmed";
+  setEditButtons(false);
+}
+
+function setEditButtons(on) {
+  ob("outlineEdit").hidden = on;
+  ob("outlineSave").hidden = !on;
+  ob("outlineCancel").hidden = !on; // always offer a way out, so other houses can be clicked
+  ob("outlineHelp").hidden = !on;
+}
+
+function startEditing() {
+  if (!outlineFeature) return;
+  stopEditing();
+  editor = map.editPolygon(outlineFeature.geometry.coordinates[0].slice(0, -1));
+  layers.buildings?.show(false); // the static home shape would sit under the editable one
+  setEditButtons(true);
+}
+
+function stopEditing() {
+  editor?.remove();
+  editor = null;
+  setEditButtons(false);
+  if (layers.buildings) applyToggles();
+}
+
+async function saveOutline() {
+  if (!editor || !current) return;
+  const coords = editor.getPath();
+  if (coords.length < 3) { statusEl.textContent = "An outline needs at least 3 corners"; return; }
+  statusEl.textContent = "Saving outline…";
+  const r = await fetch(`/api/property/${current.id}/outline`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ coordinates: coords }) });
+  if (!r.ok) { statusEl.textContent = `Error: ${JSON.stringify((await r.json()).detail)}`; return; }
+  stopEditing();
+  await pollAssessment(current.id);
+}
+
+async function revertOutline() {
+  if (!current) return;
+  const r = await fetch(`/api/property/${current.id}/outline`, { method: "DELETE" });
+  if (!r.ok) { statusEl.textContent = `Error: ${(await r.json()).detail}`; return; }
+  await pollAssessment(current.id);
+}
+
+ob("outlineEdit").addEventListener("click", startEditing);
+ob("outlineCancel").addEventListener("click", stopEditing);
+ob("outlineSave").addEventListener("click", saveOutline);
+ob("outlineRevert").addEventListener("click", revertOutline);
 
 const aiEl = document.getElementById("ai");
 const aiBackendEl = document.getElementById("aiBackend");
@@ -268,6 +361,17 @@ async function googleAdapter(cfg) {
       o.setMap(gmap);
       return { show: (v) => o.setMap(v ? gmap : null), remove: () => o.setMap(null), restyle() {} };
     },
+    editPolygon(lnglats) {
+      const poly = new google.maps.Polygon({ map: gmap, editable: true, zIndex: 2000,
+        paths: lnglats.map(([lng, lat]) => ({ lat, lng })),
+        strokeColor: "#00e5ff", strokeWeight: 3, fillColor: "#00e5ff", fillOpacity: 0.15 });
+      poly.addListener("rightclick", (e) => {
+        const path = poly.getPath();
+        if (e.vertex != null && path.getLength() > 3) path.removeAt(e.vertex);
+      });
+      return { getPath: () => poly.getPath().getArray().map((ll) => [ll.lng(), ll.lat()]),
+        remove: () => poly.setMap(null) };
+    },
     addGeoJSON(fc, style, popup, { interactive = true } = {}) {
       const d = new Data({ map: gmap });
       d.addGeoJson(fc);
@@ -316,6 +420,32 @@ async function leafletAdapter() {
     addImage(url, b) {
       const o = L.imageOverlay(url, [[b.south, b.west], [b.north, b.east]], { interactive: false }).addTo(lmap);
       return { show: (v) => (v ? o.addTo(lmap) : o.remove()), remove: () => o.remove(), restyle() {} };
+    },
+    editPolygon(lnglats) {
+      // Small vertex editor: drag corners, drag a midpoint to add a corner, right-click to remove.
+      let pts = lnglats.map(([lng, lat]) => L.latLng(lat, lng));
+      const poly = L.polygon(pts, { color: "#00e5ff", weight: 3, fillOpacity: 0.15, interactive: false }).addTo(lmap);
+      const handles = L.layerGroup().addTo(lmap);
+      const icon = (cls) => L.divIcon({ className: cls, iconSize: [12, 12] });
+      const redraw = () => {
+        poly.setLatLngs(pts);
+        handles.clearLayers();
+        pts.forEach((p, i) => {
+          const m = L.marker(p, { draggable: true, icon: icon("vtx"), bubblingMouseEvents: false }).addTo(handles);
+          m.on("drag", (e) => { pts[i] = e.target.getLatLng(); poly.setLatLngs(pts); });
+          m.on("dragend", redraw);
+          m.on("contextmenu", () => { if (pts.length > 3) { pts.splice(i, 1); redraw(); } });
+          const q = pts[(i + 1) % pts.length];
+          const mid = L.latLng((p.lat + q.lat) / 2, (p.lng + q.lng) / 2);
+          const mm = L.marker(mid, { draggable: true, icon: icon("vtx mid"), bubblingMouseEvents: false }).addTo(handles);
+          mm.on("dragstart", () => pts.splice(i + 1, 0, mid));
+          mm.on("drag", (e) => { pts[i + 1] = e.target.getLatLng(); poly.setLatLngs(pts); });
+          mm.on("dragend", redraw);
+        });
+      };
+      redraw();
+      return { getPath: () => pts.map((p) => [p.lng, p.lat]),
+        remove: () => { poly.remove(); handles.remove(); } };
     },
     addGeoJSON(fc, style, popup, { interactive = true } = {}) {
       const toLeaflet = (s) => ({ color: s.stroke, weight: s.weight, fillColor: s.fill, fillOpacity: s.fillOpacity,
@@ -377,7 +507,10 @@ function loadMapsApi(key) {
 async function main() {
   const cfg = await (await fetch("/api/config")).json();
   map = cfg.googleMapsApiKey ? await googleAdapter(cfg) : await leafletAdapter();
-  map.onClick((lat, lng) => assess(lat, lng).catch((e) => { statusEl.textContent = e.message; }));
+  map.onClick((lat, lng) => {
+    if (editor) return; // clicks belong to the outline editor while it is open
+    assess(lat, lng).catch((e) => { statusEl.textContent = e.message; });
+  });
   renderLegend();
   await setupAi();
   const qid = new URLSearchParams(location.search).get("id");
