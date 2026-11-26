@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -16,11 +17,30 @@ import requests
 ROOT = Path(__file__).resolve().parents[2]
 CALL_LOG = ROOT / "data" / "ai_calls.jsonl"
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+
+
+def _ollama_url() -> str:
+    """Ollama base URL from OLLAMA_HOST (Ollama's own variable: "host", "host:port" or a URL).
+
+    OLLAMA_URL is still read for older .env files. Default: this machine.
+    """
+    raw = (os.getenv("OLLAMA_HOST") or os.getenv("OLLAMA_URL") or "localhost:11434").strip().rstrip("/")
+    if "://" in raw:
+        return raw                                 # a full URL is used as given
+    hostport = raw.split("/", 1)[0]
+    if ":" not in hostport.rsplit("]", 1)[-1]:     # bare host: Ollama's default port (IPv6 brackets ok)
+        raw = raw.replace(hostport, hostport + ":11434", 1)
+    return "http://" + raw
+
+
+OLLAMA_URL = _ollama_url()
 OLLAMA_MODEL = os.getenv("FS_OLLAMA_MODEL", "qwen3-vl:8b-instruct")
 CLAUDE_MODEL = os.getenv("FS_CLAUDE_MODEL", "claude-opus-5-5")
 CLAUDE_EFFORT = os.getenv("FS_CLAUDE_EFFORT", "medium")
 CLAUDE_MAX_TOKENS = 8000
+# Hard cap on Claude spend per calendar day (server local time), summed from data/ai_calls.jsonl.
+DAILY_CAP_ENV = "FS_CLAUDE_DAILY_CAP_USD"
+DAILY_CAP_DEFAULT = 5.0
 # USD per million tokens (input, output), first-party API rates as of 2026-11.
 PRICES = {
     "claude-opus-5-5": (4.0, 20.0), "claude-opus-5": (5.0, 25.0), "claude-opus-4-8": (5.0, 25.0),
@@ -31,6 +51,40 @@ PRICES = {
 
 class SpendCapExceeded(RuntimeError):
     pass
+
+
+class DailyCapReached(SpendCapExceeded):
+    """Today's Claude spend plus the next call's worst case would pass the daily cap."""
+
+
+def daily_cap_usd() -> float:
+    return float(os.getenv(DAILY_CAP_ENV, str(DAILY_CAP_DEFAULT)))
+
+
+def spent_today_usd(backend: str = "claude") -> float:
+    """Logged spend for today (local date) for one backend."""
+    if not CALL_LOG.exists():
+        return 0.0
+    today = time.strftime("%Y-%m-%d")
+    total = 0.0
+    with CALL_LOG.open() as fh:
+        for line in fh:
+            if not line.startswith('{"ts": "' + today):
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("backend") == backend:
+                total += float(row.get("cost_usd") or 0.0)
+    return total
+
+
+# Worst-case cost of Claude calls in flight in this process, so two runs at once cannot both
+# squeeze under the daily cap. The service runs one worker, so a process lock is enough.
+_inflight_lock = threading.Lock()
+_inflight_usd = 0.0
+_unlogged_usd = 0.0   # spent by finished calls that log_call has not written yet
 
 
 class BackendUnusable(RuntimeError):
@@ -74,12 +128,15 @@ class OllamaBackend(Backend):
 
     def __init__(self, model: str = OLLAMA_MODEL):
         self.model = model
+        self.offline = False
 
     def available(self):
         try:
-            tags = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5).json()["models"]
-        except Exception as e:
-            return False, f"Ollama not reachable at {OLLAMA_URL}: {e}"
+            tags = requests.get(f"{OLLAMA_URL}/api/tags", timeout=(2, 4)).json()["models"]
+        except Exception:
+            self.offline = True
+            return False, (f"Local AI offline: Ollama at {OLLAMA_URL} is not answering "
+                           "(the Mac running it may be asleep or off the VPN)")
         names = [m["name"] for m in tags]
         if self.model not in names:
             return False, f"Ollama model {self.model} not installed (have: {', '.join(names)})"
@@ -146,7 +203,11 @@ class ClaudeBackend(Backend):
         bad = _key_problem(os.environ["ANTHROPIC_API_KEY"], self.model)
         if bad:
             return False, bad
-        return True, f"Claude {self.model}, cap ${self.cap_usd:.2f} per run"
+        today, cap = spent_today_usd(), daily_cap_usd()
+        if today >= cap:
+            return False, f"Daily Claude cap reached: ${today:.2f} of ${cap:.2f} spent today"
+        return True, (f"Claude {self.model}, cap ${self.cap_usd:.2f} per run, "
+                      f"${today:.2f} of ${cap:.2f} spent today")
 
     @property
     def client(self):
@@ -181,6 +242,23 @@ class ClaudeBackend(Backend):
         if self.spent_usd + worst > self.cap_usd:
             raise SpendCapExceeded(f"next call could cost up to ${worst:.3f}; spent ${self.spent_usd:.3f} "
                                    f"of ${self.cap_usd:.2f} cap")
+        global _inflight_usd, _unlogged_usd
+        with _inflight_lock:
+            today, cap = spent_today_usd(), daily_cap_usd()
+            if today + _inflight_usd + _unlogged_usd + worst > cap:
+                raise DailyCapReached(f"daily Claude cap: next call could cost up to ${worst:.3f}; "
+                                      f"${today:.2f} of ${cap:.2f} already spent today")
+            _inflight_usd += worst
+        try:
+            res = self._send(messages, system, schema, res)
+        finally:
+            with _inflight_lock:
+                _inflight_usd -= worst
+                _unlogged_usd += res.cost_usd
+        return res
+
+    def _send(self, messages, system, schema, res):
+        import anthropic
         t0 = time.time()
         try:
             resp = self.client.beta.messages.create(
@@ -223,4 +301,8 @@ def get(name: str) -> Backend:
 
 
 def log_call(res: CallResult, **context) -> None:
-    _log(res, context)
+    global _unlogged_usd
+    with _inflight_lock:
+        _log(res, context)
+        if res.backend == "claude":
+            _unlogged_usd = max(0.0, _unlogged_usd - res.cost_usd)

@@ -90,7 +90,7 @@ function renderLegend() {
 
 async function assess(lat, lng) {
   statusEl.textContent = "Starting assessment…";
-  const r = await fetch("/api/assess", {
+  const r = await fetch("api/assess", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lat, lng }),
   });
   if (!r.ok) { statusEl.textContent = `Error: ${(await r.json()).detail?.[0]?.msg || r.status}`; return; }
@@ -100,7 +100,7 @@ async function assess(lat, lng) {
 
 async function pollAssessment(id) {
   for (;;) {
-    const s = await (await fetch(`/api/assess/${id}`)).json();
+    const s = await (await fetch(`api/assess/${id}`)).json();
     statusEl.textContent = s.message;
     if (s.status === "done") return show(id, s.summary);
     if (s.status === "error") { statusEl.textContent = `Error: ${s.message}`; return; }
@@ -114,13 +114,13 @@ async function show(id, summary) {
   current = { id, summary };
   stopEditing();
   if (summary.ortho) {
-    layers.ortho = map.addImage(`/api/property/${id}/ortho.png`, summary.ortho);
+    layers.ortho = map.addImage(`api/property/${id}/ortho.png`, summary.ortho);
   }
   const needed = summary.status === "outline_needed";
   // Order matters for click targets: zones under parcel under buildings under trees.
   let extent = null;
   for (const name of needed ? ["parcel", "buildings"] : ["zones", "parcel", "buildings", "trees"]) {
-    const fc = await (await fetch(`/api/property/${id}/${name}.geojson`)).json();
+    const fc = await (await fetch(`api/property/${id}/${name}.geojson`)).json();
     if (name === "zones") extent = bboxOf(fc);
     // Only trees keep pop-ups; zones, parcel and buildings pass clicks through so any house,
     // including one inside the current rings, can be selected for assessment.
@@ -153,7 +153,7 @@ let outlineFeature = null;
 
 async function renderOutline(id, summary) {
   outlineEl.hidden = false;
-  const r = await fetch(`/api/property/${id}/outline.geojson`);
+  const r = await fetch(`api/property/${id}/outline.geojson`);
   outlineFeature = r.ok ? (await r.json()).features[0] : null;
   const o = summary.home?.outline;
   const rows = [];
@@ -324,7 +324,7 @@ function stopEditing() {
 async function saveOutline() {
   if (!editor || !current) return;
   statusEl.textContent = "Saving outline…";
-  const r = await fetch(`/api/property/${current.id}/outline`, { method: "POST",
+  const r = await fetch(`api/property/${current.id}/outline`, { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rects: editor.rings() }) });
   if (!r.ok) { statusEl.textContent = `Error: ${JSON.stringify((await r.json()).detail)}`; return; }
   stopEditing();
@@ -333,7 +333,7 @@ async function saveOutline() {
 
 async function revertOutline() {
   if (!current) return;
-  const r = await fetch(`/api/property/${current.id}/outline`, { method: "DELETE" });
+  const r = await fetch(`api/property/${current.id}/outline`, { method: "DELETE" });
   if (!r.ok) { statusEl.textContent = `Error: ${(await r.json()).detail}`; return; }
   await pollAssessment(current.id);
 }
@@ -353,12 +353,14 @@ const aiStatusEl = document.getElementById("aiStatus");
 const aiTotalsEl = document.getElementById("aiTotals");
 
 async function setupAi() {
-  const st = await (await fetch("/api/ai/status")).json();
+  const st = await (await fetch("api/ai/status")).json();
   aiBackendEl.innerHTML = Object.entries(st.backends).map(([k, b]) =>
-    `<option value="${k}" ${b.available ? "" : "disabled"}>${k === "local" ? "Local" : "Claude"} (${esc(b.model)})${b.available ? "" : " – unavailable"}</option>`).join("");
+    `<option value="${k}" ${b.available ? "" : "disabled"}>${k === "local" ? "Local" : "Claude"} (${esc(b.model)})${b.available ? "" : b.state === "offline" ? " – offline" : " – unavailable"}</option>`).join("");
   const firstOk = Object.entries(st.backends).find(([, b]) => b.available);
   if (firstOk) aiBackendEl.value = firstOk[0];
   aiBackendEl.title = Object.values(st.backends).map((b) => b.detail).join("\n");
+  // Not an error: the server reaches Ollama on the Mac over the VPN, so it is often asleep.
+  aiStatusEl.textContent = Object.values(st.backends).filter((b) => !b.available).map((b) => b.detail).join(" · ");
   aiBackendEl.addEventListener("change", () => current && loadFindings(current.id));
   document.getElementById("aiRun").addEventListener("click", runAi);
 }
@@ -366,11 +368,11 @@ async function setupAi() {
 async function runAi() {
   if (!current) return;
   const backend = aiBackendEl.value;
-  const r = await fetch("/api/ai/run", { method: "POST", headers: { "Content-Type": "application/json" },
+  const r = await fetch("api/ai/run", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id: current.id, backend }) });
   if (!r.ok) { aiStatusEl.textContent = `Error: ${(await r.json()).detail}`; return; }
   for (;;) {
-    const j = await (await fetch(`/api/ai/job/${current.id}/${backend}`)).json();
+    const j = await (await fetch(`api/ai/job/${current.id}/${backend}`)).json();
     aiStatusEl.textContent = j.message;
     if (j.status === "done") return loadFindings(current.id);
     if (j.status === "error") { aiStatusEl.textContent = `Error: ${j.message}`; return; }
@@ -384,12 +386,12 @@ async function loadFindings(id) {
   aiEl.hidden = false;
   document.getElementById("compareLink").href = `compare.html?id=${id}`;
   const backend = aiBackendEl.value || "local";
-  const r = await fetch(`/api/ai/${id}/${backend}`);
+  const r = await fetch(`api/ai/${id}/${backend}`);
   if (!r.ok) { aiStatusEl.textContent = "No findings yet for this backend. Press Run."; aiTotalsEl.innerHTML = ""; return; }
   const res = await r.json();
   const feats = [];
   for (const z of res.zones) {
-    const crop = z.crop ? `/api/property/${id}/crop/${z.zone}.png` : null;
+    const crop = z.crop ? `api/property/${id}/crop/${z.zone}.png` : null;
     for (const f of z.findings) {
       if (f.status === "ok" && f.lidar.result !== "disagree") continue; // pin concerns, can't-tells and conflicts
       feats.push({ type: "Feature", geometry: { type: "Point", coordinates: [f.geo.lng, f.geo.lat] },
@@ -624,7 +626,7 @@ function loadMapsApi(key) {
 }
 
 async function main() {
-  const cfg = await (await fetch("/api/config")).json();
+  const cfg = await (await fetch("api/config")).json();
   map = cfg.googleMapsApiKey ? await googleAdapter(cfg) : await leafletAdapter();
   map.onClick((lat, lng) => {
     if (editor) return; // clicks belong to the outline editor while it is open
@@ -634,7 +636,7 @@ async function main() {
   await setupAi();
   const qid = new URLSearchParams(location.search).get("id");
   if (qid && /^[0-9a-f]{12}$/.test(qid)) {
-    const s = await (await fetch(`/api/assess/${qid}`)).json();
+    const s = await (await fetch(`api/assess/${qid}`)).json();
     if (s.summary) return show(qid, s.summary);
   }
   statusEl.textContent = cfg.googleMapsApiKey

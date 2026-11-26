@@ -33,6 +33,11 @@ Step 2 of the prototype: a vision model reads each Home Ignition Zone against th
   *spent so far + worst case* (input + all 8000 max output tokens) would pass the per-run cap.
 - Cap: `FS_AI_RUN_CAP_USD` (default `0.50` per property run). Prices are in `PRICES` in
   `backends.py` (Opus 5.5: $4 in / $20 out per million tokens).
+- Daily cap: `FS_CLAUDE_DAILY_CAP_USD` (default `5`). Today's logged Claude spend, plus calls
+  in flight and their worst case, must stay under it or the call is refused before sending. If
+  the cap is hit before anything in a run was paid for, the run is refused and earlier results stay
+  on disk; mid-run, the remaining zones are marked skipped. When today's spend has reached the cap,
+  Claude shows as unavailable with the amount spent.
 - A rejected key stops the run immediately without writing results; the app checks the key with
   the free Models API and shows the reason in the UI.
 
@@ -62,4 +67,5 @@ Step 2 of the prototype: a vision model reads each Home Ignition Zone against th
 | `FS_CLAUDE_MODEL` | `claude-opus-5-5` | Claude model id (must be in `PRICES`) |
 | `FS_CLAUDE_EFFORT` | `medium` | `low` / `medium` / `high` |
 | `FS_OLLAMA_MODEL` | `qwen3-vl:8b-instruct` | Local vision model |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama server |
+| `FS_CLAUDE_DAILY_CAP_USD` | `5` | Hard cap on Claude spend per calendar day (server local time), summed from `data/ai_calls.jsonl`; a call that could pass it is refused before it is sent |
+| `OLLAMA_HOST` | `localhost:11434` | Ollama server: host, host:port or URL (`OLLAMA_URL` still works). When it does not answer, local AI shows as offline, not as an error |

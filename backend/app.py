@@ -189,8 +189,11 @@ def ai_status() -> dict:
     for name in BACKENDS:
         be = ai_backends.get(name)
         ok, why = be.available()
-        out[name] = {"available": ok, "detail": why, "model": be.model}
-    return {"backends": out, "checklist_version": ai_checklist.load()["version"]}
+        state = "ready" if ok else "offline" if getattr(be, "offline", False) else "unavailable"
+        out[name] = {"available": ok, "state": state, "detail": why, "model": be.model}
+    return {"backends": out, "checklist_version": ai_checklist.load()["version"],
+            "claude_spent_today_usd": round(ai_backends.spent_today_usd(), 4),
+            "claude_daily_cap_usd": ai_backends.daily_cap_usd()}
 
 
 @app.get("/api/ai/checklist")

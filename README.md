@@ -20,6 +20,8 @@ Command-line run for one property (prints a summary, writes `data/processed/<id>
 make assess LAT=54.69 LNG=-127.05
 ```
 
+Running it on the home server behind Caddy: [deploy/README.md](deploy/README.md).
+
 Tests (offline, synthetic data): `.venv/bin/pip install pytest && .venv/bin/python -m pytest tests`
 
 ## What the pipeline does

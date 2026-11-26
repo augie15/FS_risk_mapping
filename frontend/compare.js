@@ -16,8 +16,8 @@ async function getJson(url) {
 }
 
 async function init() {
-  const props = await getJson("/api/properties");
-  aiStatus = await getJson("/api/ai/status");
+  const props = await getJson("api/properties");
+  aiStatus = await getJson("api/ai/status");
   const want = new URLSearchParams(location.search).get("id");
   $("prop").innerHTML = props.map((p, i) =>
     `<option value="${p.id}">Property ${i + 1} · ${p.id.slice(0, 6)} · ${p.trees} trees · AI: ${p.ai.join(" + ") || "none"}</option>`).join("");
@@ -32,9 +32,9 @@ async function load(id) {
   history.replaceState(null, "", `?id=${id}`);
   $("mapLink").href = `index.html?id=${id}`;
   results = {};
-  for (const b of BACKENDS) results[b] = await getJson(`/api/ai/${id}/${b}`);
+  for (const b of BACKENDS) results[b] = await getJson(`api/ai/${id}/${b}`);
   marks = {};
-  for (const m of (await getJson(`/api/marks/${id}`)) || []) marks[`${m.backend}|${m.zone}|${m.item_id}`] = m;
+  for (const m of (await getJson(`api/marks/${id}`)) || []) marks[`${m.backend}|${m.zone}|${m.item_id}`] = m;
   render();
 }
 
@@ -87,6 +87,7 @@ function card(b) {
     <tr><td>Run</td><td>${esc(r.finished || r.started)}</td></tr></table>
     ${r.stale ? '<div class="note">⚠ Out of date: the property was re-run after these findings. Re-run before marking.</div>' : ""}
     ${st?.available ? `<button data-run="${b}" type="button" style="margin-top:.4rem">Re-run</button>` : ""}
+    ${st && !st.available ? `<p class="hint">${esc(st.detail)}</p>` : ""}
     <p id="run-${b}" class="hint"></p></div>`;
 }
 
@@ -125,7 +126,7 @@ function zoneBlock(z, fm) {
     .map((p) => `${NAMES[b]}: ${esc(p)}`));
   return `<section class="zone"><h2>${esc(z.label)}</h2>
     <div class="zone-grid">
-      <div>${z.crop ? `<img src="/api/property/${pid}/crop/${z.zone}.png" alt="${esc(z.label)} crop">` : '<p class="none">No orthophoto</p>'}
+      <div>${z.crop ? `<img src="api/property/${pid}/crop/${z.zone}.png" alt="${esc(z.label)} crop">` : '<p class="none">No orthophoto</p>'}
         <div class="facts">${esc(factBits)}</div></div>
       <div><table><thead><tr><th>Checklist item</th><th>${NAMES.local}</th><th>${NAMES.claude}</th><th>Agree</th></tr></thead>
         <tbody>${rows}</tbody></table>
@@ -153,7 +154,7 @@ async function onMark(e) {
   const verdict = marks[key]?.verdict === v ? null : v; // click again to clear
   const body = { property_id: pid, backend: b, zone, item_id: item, verdict, model: results[b].model,
     model_status: status, checklist_version: results[b].checklist_version };
-  const r = await fetch("/api/marks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch("api/marks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) { $("status").textContent = "Could not save mark"; return; }
   if (verdict) marks[key] = body; else delete marks[key];
   box.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.v === verdict));
@@ -163,10 +164,10 @@ async function onMark(e) {
 
 async function runBackend(b) {
   const msg = $(`run-${b}`);
-  const r = await fetch("/api/ai/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: pid, backend: b }) });
+  const r = await fetch("api/ai/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: pid, backend: b }) });
   if (!r.ok) { msg.textContent = `Error: ${(await r.json()).detail}`; return; }
   for (;;) {
-    const j = await getJson(`/api/ai/job/${pid}/${b}`);
+    const j = await getJson(`api/ai/job/${pid}/${b}`);
     const el = $(`run-${b}`);
     if (el) el.textContent = j.message;
     if (j.status === "done") return load(pid);

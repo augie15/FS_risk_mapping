@@ -2,6 +2,7 @@
 against a local stub server (no network, no spend)."""
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -91,6 +92,14 @@ class _Stub(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_spend(tmp_path, monkeypatch):
+    """Never read or write the real data/ai_calls.jsonl; start each test with nothing in flight."""
+    monkeypatch.setattr(backends, "CALL_LOG", tmp_path / "ai_calls.jsonl")
+    monkeypatch.setattr(backends, "_unlogged_usd", 0.0)
+    monkeypatch.setattr(backends, "_inflight_usd", 0.0)
 
 
 @pytest.fixture
@@ -189,3 +198,64 @@ def test_truncated_lidar_download_is_not_cached(tmp_path, monkeypatch):
         sources.download_lidar({"filename": "s.laz", "s3Url": "https://example.invalid/s.laz"})
     assert not (tmp_path / "lidar" / "s.laz").exists()
     assert not list((tmp_path / "lidar").glob("*.part"))
+
+
+# ---------------------------------------------------------------- deploy settings: daily cap, Ollama host
+
+def test_daily_cap_refuses_before_sending(stub_client, monkeypatch):
+    log = backends.CALL_LOG
+    monkeypatch.setenv("FS_CLAUDE_DAILY_CAP_USD", "0.30")
+    today = time.strftime("%Y-%m-%d")
+    log.write_text(
+        json.dumps({"ts": f"{today}T08:00:00", "backend": "claude", "cost_usd": 0.10}) + "\n"
+        + json.dumps({"ts": f"{today}T08:01:00", "backend": "local", "cost_usd": 9.0}) + "\n"
+        + json.dumps({"ts": "2001-01-01T08:00:00", "backend": "claude", "cost_usd": 9.0}) + "\n")
+    assert backends.spent_today_usd() == pytest.approx(0.10)
+    be = backends.ClaudeBackend(model="claude-opus-5-5", cap_usd=10.0)
+    be._client = stub_client
+    # $0.10 spent + $0.168 worst case = $0.268 <= $0.30: allowed.
+    res = be.call(prompt.SYSTEM, "facts", None, prompt.schema("outer"))
+    backends.log_call(res, property_id="x", zone="outer")
+    assert backends.spent_today_usd() == pytest.approx(0.118)
+    n_sent = sum(1 for p, _, _ in _Stub.seen if not p.startswith("/v1/messages/count_tokens"))
+    # $0.118 + $0.168 = $0.286 still fits; then $0.136 + $0.168 does not.
+    backends.log_call(be.call(prompt.SYSTEM, "facts", None, prompt.schema("outer")), property_id="x", zone="outer")
+    with pytest.raises(backends.DailyCapReached):
+        be.call(prompt.SYSTEM, "facts", None, prompt.schema("outer"))
+    sent_after = sum(1 for p, _, _ in _Stub.seen if not p.startswith("/v1/messages/count_tokens"))
+    assert sent_after == n_sent + 1          # the refused call never reached the messages endpoint
+
+
+def test_daily_cap_counts_unlogged_calls(stub_client, monkeypatch):
+    """A finished call that is not logged yet still counts against the cap."""
+    monkeypatch.setenv("FS_CLAUDE_DAILY_CAP_USD", "0.20")
+    be = backends.ClaudeBackend(model="claude-opus-5-5", cap_usd=10.0)
+    be._client = stub_client
+    be.call(prompt.SYSTEM, "facts", None, prompt.schema("outer"))   # 0     + 0.168 fits; costs 0.018
+    be.call(prompt.SYSTEM, "facts", None, prompt.schema("outer"))   # 0.018 + 0.168 fits
+    with pytest.raises(backends.DailyCapReached):                   # 0.036 + 0.168 > 0.20
+        be.call(prompt.SYSTEM, "facts", None, prompt.schema("outer"))
+    assert backends.spent_today_usd() == 0.0                        # nothing logged
+
+
+@pytest.mark.parametrize("value,url", [
+    (None, "http://localhost:11434"),
+    ("10.10.0.5", "http://10.10.0.5:11434"),
+    ("10.10.0.5:8080", "http://10.10.0.5:8080"),
+    ("http://mac.wg:11434/", "http://mac.wg:11434"),
+    ("[fd00::2]", "http://[fd00::2]:11434"),
+])
+def test_ollama_host_forms(monkeypatch, value, url):
+    monkeypatch.delenv("OLLAMA_URL", raising=False)
+    if value is None:
+        monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    else:
+        monkeypatch.setenv("OLLAMA_HOST", value)
+    assert backends._ollama_url() == url
+
+
+def test_ollama_unreachable_is_offline(monkeypatch):
+    monkeypatch.setattr(backends, "OLLAMA_URL", "http://127.0.0.1:9")   # discard port: refused
+    be = backends.OllamaBackend()
+    ok, why = be.available()
+    assert not ok and be.offline and why.startswith("Local AI offline")

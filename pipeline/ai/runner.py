@@ -61,6 +61,9 @@ def run(pid: str, backend_name: str, progress=lambda m: None) -> dict:
         try:
             res = be.call(prompt.SYSTEM, prompt.user_text(key, facts, crop), img, prompt.schema(key))
         except backends.SpendCapExceeded as e:
+            if isinstance(e, backends.DailyCapReached) and not any(
+                    r.get("cost_usd") for r in result["zones"]):
+                raise  # nothing paid for yet: refuse the run, keep any earlier results on disk
             zr.update(error=f"skipped: {e}", findings=[], latency_s=0, input_tokens=0,
                       output_tokens=0, cost_usd=0)
             result["zones"].append(zr)
