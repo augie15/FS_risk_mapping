@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -16,7 +16,7 @@ import pyproj
 from shapely.geometry import mapping
 from shapely.ops import transform as shp_transform
 
-from pipeline import outlines
+from pipeline import gis, outlines, report, score
 from pipeline import rects as ai_rects
 from pipeline.property import PROCESSED, assess, property_id
 
@@ -174,6 +174,54 @@ def property_ortho(pid: str):
     if not (out / "ortho.png").exists():
         raise HTTPException(404, "no orthophoto for this property")
     return FileResponse(out / "ortho.png", media_type="image/png")
+
+
+# ---------------------------------------------------------------- risk score, report, GIS downloads
+
+def _score_or_error(pid: str) -> dict:
+    out = _check_id(pid)
+    if not (out / "summary.json").exists():
+        raise HTTPException(404, "run the property assessment first")
+    try:
+        return score.compute(pid)
+    except ValueError as e:      # outline needed
+        raise HTTPException(409, str(e)) from e
+
+
+@app.get("/api/property/{pid}/score")
+def property_score(pid: str) -> dict:
+    return _score_or_error(pid)
+
+
+@app.get("/api/property/{pid}/report.pdf")
+def property_report(pid: str):
+    sc = _score_or_error(pid)
+    pdf = report.build_pdf(pid, sc)
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="wildfire_report_{pid}.pdf"'})
+
+
+DOWNLOADS = {"outline.geojson", "zones.geojson", "findings.geojson", "chm.tif", "slope.tif"}
+
+
+@app.get("/api/property/{pid}/download/{name}")
+def property_download(pid: str, name: str):
+    if name not in DOWNLOADS:
+        raise HTTPException(404, "unknown download")
+    out = _check_id(pid)
+    disp = {"Content-Disposition": f'attachment; filename="{pid}_{name}"'}
+    if name == "findings.geojson":
+        return JSONResponse(gis.findings_geojson(_score_or_error(pid)), media_type="application/geo+json",
+                            headers=disp)
+    if name == "slope.tif":
+        if not (out / "dtm.tif").exists():
+            raise HTTPException(404, "no ground model for this property")
+        return FileResponse(gis.slope_tif(pid), media_type="image/tiff", headers=disp)
+    path = out / name
+    if not path.exists():
+        raise HTTPException(404, f"no {name} for this property")
+    return FileResponse(path, media_type="image/tiff" if name.endswith(".tif") else "application/geo+json",
+                        headers=disp)
 
 
 # ---------------------------------------------------------------- AI findings

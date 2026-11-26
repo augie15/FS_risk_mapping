@@ -98,3 +98,13 @@ FS_AI_RUN_CAP_USD=0.50
 - `data/raw`, `data/processed` downloads and outputs (git-ignored)
 
 Never commit `.env` or anything under `data/`: this repository is public.
+
+## Risk score, PDF report and GIS downloads (step 3)
+
+Each assessed property gets a score out of 100 (Low / Moderate / High / Extreme): up to 80 points
+from fixed rules on LiDAR measurements per zone, and up to 20 from AI findings on things LiDAR
+cannot see, counted only when the operator marked them correct or both models agree. The map panel
+shows the score and the three things to fix first, a PDF report (map with zone rings and numbered
+findings), and GIS downloads: outline, zones and findings as GeoJSON; canopy height and slope as
+GeoTIFF. Rules: [docs/RISK_SCORE.md](docs/RISK_SCORE.md).
+

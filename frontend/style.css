@@ -42,3 +42,16 @@ button.linkish { background: none; border: 0; padding: 0; margin-top: .4rem; col
 .vtx-move { transform: rotate(45deg); background: #e0fbff; }
 .vtx-rotate { background: #ffd400; border-color: #7a6400; border-radius: 50%; }
 #aiStatus.note { margin: .3rem 0; }
+
+/* risk score panel */
+.risk-head { display: flex; align-items: baseline; gap: .4rem; margin: .1rem 0 .2rem; }
+.risk-num { font-size: 2rem; font-weight: 700; line-height: 1; }
+.risk-band { margin-left: auto; padding: .1rem .55rem; border-radius: 999px; font-weight: 600; font-size: .85rem; color: #fff; }
+.band-low { background: #2e7d32; }
+.band-moderate { background: #e6a000; color: #1a1a1a; }
+.band-high { background: #e65100; }
+.band-extreme { background: #b71c1c; }
+#risk h3 { font-size: .9rem; margin: .5rem 0 .2rem; }
+.fixes { margin: 0 0 .4rem 1.1rem; padding: 0; font-size: .85rem; }
+.fixes li { margin-bottom: .25rem; }
+.dl a { white-space: nowrap; }

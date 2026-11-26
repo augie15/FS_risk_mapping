@@ -36,6 +36,7 @@ No GDAL, PROJ or LAZ system libraries are needed. The pip wheels bring them:
 | Coordinate transforms (PROJ) | `pyproj` wheel |
 | Geometry (GEOS) | `shapely` wheel |
 | LAZ point clouds | `laspy` + `lazrs` (Rust LAZ decoder) wheels |
+| PDF reports | `reportlab` wheel |
 
 These wheels exist for x86_64 and aarch64 Linux on Python 3.12. If `pip` ever starts building
 one of them from source, stop: that means the Python version is wrong.

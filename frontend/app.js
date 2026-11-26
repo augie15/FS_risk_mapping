@@ -133,6 +133,7 @@ async function show(id, summary) {
   history.replaceState(null, "", `?id=${id}`);
   await renderOutline(id, summary);
   if (needed) {
+    riskEl.hidden = true;
     summaryEl.hidden = true;
     aiEl.hidden = true;
     statusEl.textContent = "Outline needed: adjust the cyan outline to the roof, then Save";
@@ -142,6 +143,33 @@ async function show(id, summary) {
   renderSummary(summary);
   statusEl.textContent = `Done in ${summary.elapsed_s}s`;
   await loadFindings(id);
+  await loadRisk(id);
+}
+
+// ---------------------------------------------------------------- risk score, report, downloads
+
+const riskEl = document.getElementById("risk");
+
+async function loadRisk(id) {
+  const r = await fetch(`api/property/${id}/score`);
+  if (!r.ok) { riskEl.hidden = true; return; }
+  const s = await r.json();
+  if (current?.id !== id) return;   // another property was opened meanwhile
+  const byN = Object.fromEntries(s.findings.map((f) => [f.n, f]));
+  const fixes = s.fix_first.map((n) => `<li>${esc(byN[n].fix)} <span class="hint">(#${n}, ${byN[n].points} pts)</span></li>`).join("");
+  const checks = s.findings.filter((f) => f.points === 0).length;
+  const dl = (name, label) => `<a href="api/property/${id}/download/${name}" download>${label}</a>`;
+  riskEl.innerHTML = `
+    <h2>Risk score</h2>
+    <div class="risk-head"><span class="risk-num">${s.score}</span><span class="hint">/ ${s.max}</span>
+      <span class="risk-band band-${s.band.toLowerCase()}">${s.band}</span></div>
+    <p class="hint">LiDAR rules ${s.lidar_points}/${s.lidar_max} · confirmed AI ${s.ai_points}/${s.ai_max}${checks ? ` · ${checks} AI observation${checks > 1 ? "s" : ""} to check on site` : ""}</p>
+    ${fixes ? `<h3>Fix first</h3><ol class="fixes">${fixes}</ol>` : "<p>No scored findings.</p>"}
+    <p><a href="api/property/${id}/report.pdf" target="_blank" rel="noopener">PDF report →</a></p>
+    <p class="hint dl">GIS: ${dl("outline.geojson", "outline")} · ${dl("zones.geojson", "zones")} ·
+      ${dl("findings.geojson", "findings")} (GeoJSON) · ${dl("chm.tif", "canopy height")} ·
+      ${dl("slope.tif", "slope")} (GeoTIFF)</p>`;
+  riskEl.hidden = false;
 }
 
 // ---------------------------------------------------------------- home outline editing
@@ -374,7 +402,7 @@ async function runAi() {
   for (;;) {
     const j = await (await fetch(`api/ai/job/${current.id}/${backend}`)).json();
     aiStatusEl.textContent = j.message;
-    if (j.status === "done") return loadFindings(current.id);
+    if (j.status === "done") { await loadFindings(current.id); return loadRisk(current.id); }
     if (j.status === "error") { aiStatusEl.textContent = `Error: ${j.message}`; return; }
     await new Promise((res) => setTimeout(res, 1500));
   }
