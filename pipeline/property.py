@@ -26,9 +26,10 @@ from shapely.geometry import Point, box, mapping, shape
 from shapely.ops import transform as shp_transform
 
 from . import lidar, outlines, rects, roof, sources
+from .paths import DATA
 
 ROOT = Path(__file__).resolve().parent.parent
-PROCESSED = ROOT / "data" / "processed"
+PROCESSED = DATA / "processed"
 
 # FireSmart BC Home Ignition Zone bands, metres from the building edge.
 ZONES = [

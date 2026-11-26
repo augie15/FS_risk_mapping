@@ -17,8 +17,10 @@ from typing import Callable
 import requests
 from shapely.geometry import Point, box, shape
 
+from .paths import DATA
+
 ROOT = Path(__file__).resolve().parent.parent
-RAW = ROOT / "data" / "raw"
+RAW = DATA / "raw"
 UA = {"User-Agent": "fs-risk-mapping-prototype"}
 
 BC_WFS = "https://openmaps.gov.bc.ca/geo/pub/wfs"

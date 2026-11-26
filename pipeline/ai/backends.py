@@ -14,8 +14,10 @@ from pathlib import Path
 
 import requests
 
+from ..paths import DATA
+
 ROOT = Path(__file__).resolve().parents[2]
-CALL_LOG = ROOT / "data" / "ai_calls.jsonl"
+CALL_LOG = DATA / "ai_calls.jsonl"
 
 
 
