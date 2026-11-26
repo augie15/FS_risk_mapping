@@ -116,7 +116,10 @@ async function show(id, summary) {
   for (const name of ["zones", "parcel", "buildings", "trees"]) {
     const fc = await (await fetch(`/api/property/${id}/${name}.geojson`)).json();
     if (name === "zones") extent = bboxOf(fc);
-    layers[name] = map.addGeoJSON(fc, (p) => styleFor(name, p), (p) => popupFor(name, p));
+    // Only trees keep pop-ups; zones, parcel and buildings pass clicks through so any house,
+    // including one inside the current rings, can be selected for assessment.
+    layers[name] = map.addGeoJSON(fc, (p) => styleFor(name, p), (p) => popupFor(name, p),
+      { interactive: name === "trees" });
   }
   applyToggles();
   if (extent) map.fitBounds(extent);
@@ -265,13 +268,15 @@ async function googleAdapter(cfg) {
       o.setMap(gmap);
       return { show: (v) => o.setMap(v ? gmap : null), remove: () => o.setMap(null), restyle() {} };
     },
-    addGeoJSON(fc, style, popup) {
+    addGeoJSON(fc, style, popup, { interactive = true } = {}) {
       const d = new Data({ map: gmap });
       d.addGeoJson(fc);
       const apply = () => d.setStyle((f) => {
         const p = {}; f.forEachProperty((v, k) => { p[k] = v; });
         const s = style(p);
         return {
+          // Non-interactive layers let clicks fall through to the map (assess the house under it).
+          clickable: interactive,
           strokeColor: s.stroke, strokeWeight: s.weight, fillColor: s.fill, fillOpacity: s.fillOpacity,
           icon: s.pin
             ? { path: "M0 0C-3-9-11-12-11-20A11 11 0 1 1 11-20C11-12 3-9 0 0Z", scale: 1.1, fillColor: s.fill,
@@ -312,9 +317,13 @@ async function leafletAdapter() {
       const o = L.imageOverlay(url, [[b.south, b.west], [b.north, b.east]], { interactive: false }).addTo(lmap);
       return { show: (v) => (v ? o.addTo(lmap) : o.remove()), remove: () => o.remove(), restyle() {} };
     },
-    addGeoJSON(fc, style, popup) {
-      const toLeaflet = (s) => ({ color: s.stroke, weight: s.weight, fillColor: s.fill, fillOpacity: s.fillOpacity, radius: s.radius });
+    addGeoJSON(fc, style, popup, { interactive = true } = {}) {
+      const toLeaflet = (s) => ({ color: s.stroke, weight: s.weight, fillColor: s.fill, fillOpacity: s.fillOpacity,
+        radius: s.radius, interactive,
+        // Interactive features (trees, pins) open their popup only; the map click must not also fire.
+        bubblingMouseEvents: !interactive });
       const g = L.geoJSON(fc, {
+        interactive,
         style: (f) => toLeaflet(style(f.properties)),
         pointToLayer: (f, ll) => {
           const s = style(f.properties);
@@ -323,7 +332,7 @@ async function leafletAdapter() {
             className: "fpin-wrap", iconSize: [26, 34], iconAnchor: [13, 34], popupAnchor: [0, -30],
             html: `<span class="fpin" style="background:${s.fill};border-color:${s.stroke};opacity:${s.approx ? 0.75 : 1}"><b>${s.pin}</b></span>` }) });
         },
-        onEachFeature: (f, l) => l.bindPopup(() => popup(f.properties)),
+        onEachFeature: (f, l) => { if (interactive) l.bindPopup(() => popup(f.properties)); },
       }).addTo(lmap);
       return {
         show: (v) => (v ? g.addTo(lmap) : g.remove()),
