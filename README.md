@@ -6,7 +6,8 @@ parcel, Home Ignition Zones and LiDAR-detected trees.
 
 ## Run locally
 
-Needs Python 3.12 (`brew install python@3.12`); some geo wheels are not out for 3.14 yet.
+Needs Python 3.12 or 3.14 (`brew install python@3.12`); the Makefile uses 3.12 by default
+(`make setup PYTHON=python3.14` for 3.14).
 
 ```bash
 make setup     # creates .venv with python3.12, installs deps, copies .env.example -> .env

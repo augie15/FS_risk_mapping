@@ -35,18 +35,18 @@ The app finds its data through `FS_DATA_DIR=/srv/fsmapping/data`, set in the uni
 hardening in the unit: `ProtectSystem=strict`, `NoNewPrivileges`, `PrivateTmp`, `PrivateDevices`,
 `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, no capabilities.
 
-Commands below assume Ubuntu 24.04. Run them as an admin user with sudo; never run the app as that
-user.
+Commands below are for the home server: Ubuntu 26.04 LTS, x86_64, system Python 3.14. Run them as
+an admin user with sudo; never run the app as that user.
 
 ## 1. System packages
 
 ```bash
 sudo apt update
-sudo apt install -y git python3.12 python3.12-venv python3-pip ca-certificates curl
+sudo apt install -y git python3 python3-venv ca-certificates curl
+python3 --version          # Python 3.14.x on 26.04
 ```
 
-On Ubuntu 22.04 Python 3.12 is not in the main archive:
-`sudo add-apt-repository ppa:deadsnakes/ppa && sudo apt install -y python3.12 python3.12-venv`.
+The app runs on the system Python 3.14 (also tested on 3.12). No PPA or extra Python is needed.
 
 No GDAL, PROJ or LAZ system libraries are needed. The pip wheels bring them:
 
@@ -58,8 +58,10 @@ No GDAL, PROJ or LAZ system libraries are needed. The pip wheels bring them:
 | LAZ point clouds | `laspy` + `lazrs` (Rust LAZ decoder) wheels |
 | PDF reports | `reportlab` wheel |
 
-These wheels exist for x86_64 and aarch64 Linux on Python 3.12. If `pip` ever starts building
-one of them from source, stop: that means the Python version is wrong.
+Every pinned package and dependency has a prebuilt manylinux x86_64 wheel for CPython 3.14
+(checked 2026-11-26 with `pip download --only-binary=:all:` for cp314; 49 wheels, none built
+from source). The install line below passes `--only-binary=:all:`, so pip fails loudly instead of
+trying to compile something if a wheel is ever missing.
 
 ## 2. User, code, virtual environment and settings
 
@@ -67,10 +69,12 @@ one of them from source, stop: that means the Python version is wrong.
 sudo useradd --system --create-home --home-dir /srv/fsmapping --shell /usr/sbin/nologin fsmap
 sudo chmod 750 /srv/fsmapping
 sudo -u fsmap git clone https://github.com/augie15/FS_risk_mapping.git /srv/fsmapping/app
-sudo -u fsmap git -C /srv/fsmapping/app checkout deploy/home-server   # or the branch you deploy
-sudo -u fsmap python3.12 -m venv /srv/fsmapping/app/.venv
+sudo -u fsmap git -C /srv/fsmapping/app checkout feature/risk-score-report
+sudo -u fsmap python3 -m venv /srv/fsmapping/app/.venv
 sudo -u fsmap /srv/fsmapping/app/.venv/bin/pip install --upgrade pip
-sudo -u fsmap /srv/fsmapping/app/.venv/bin/pip install -r /srv/fsmapping/app/requirements.txt
+sudo -u fsmap /srv/fsmapping/app/.venv/bin/pip install --only-binary=:all: \
+    -r /srv/fsmapping/app/requirements.txt
+sudo -u fsmap /srv/fsmapping/app/.venv/bin/python -c "import rasterio, laspy, lazrs, pyproj, shapely, reportlab; print('ok')"
 sudo -u fsmap mkdir -p /srv/fsmapping/data       # must exist before the service starts
 sudo -u fsmap install -m 600 /srv/fsmapping/app/.env.example /srv/fsmapping/app/.env
 ```
@@ -125,7 +129,7 @@ journalctl -u fsmapping -f            # logs
 The unit runs uvicorn as `fsmap` with one worker, no `--reload`, bound to 127.0.0.1:8800, with
 write access only to `/srv/fsmapping/data`. To update:
 `sudo -u fsmap git -C /srv/fsmapping/app pull`, then (if `requirements.txt` changed) the pip
-install line above, then `sudo systemctl restart fsmapping`. Restart after any `.env` change too
+install lines above, then `sudo systemctl restart fsmapping`. Restart after any `.env` change too
 (the Claude key check is cached per process).
 
 ## 4. Final checks (on the server)
